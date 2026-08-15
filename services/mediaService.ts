@@ -107,7 +107,7 @@ export async function getMediaItemsByFilter(filter: 'IN_PROGRESS' | 'ALL' | 'COM
 
   let whereClause = '';
   if (filter === 'IN_PROGRESS') {
-    whereClause = "WHERE m.status IN ('PLAN_TO_WATCH', 'WATCHING')";
+    whereClause = "WHERE m.status = 'WATCHING'";
   } else if (filter === 'COMPLETED') {
     whereClause = "WHERE m.status = 'COMPLETED'";
   } else if (filter === 'DROPPED') {
@@ -235,16 +235,24 @@ function generateId(prefix?: string): string {
 
 /**
  * Save a search result (from TMDb/Google Books via apiService) into the local library,
- * and optionally attach it to a specific list in the same step.
+ * and link it into one or more lists in the same step.
+ *
+ * List membership is now mandatory — every media item must belong to at least
+ * one list, so this throws if listIds is empty. Callers (search.tsx) are
+ * responsible for collecting at least one list before calling this.
  *
  * - If this external item was already imported before (matched by external_id),
  *   it reuses the existing media_items row instead of creating a duplicate.
- * - If listId is provided and the item is already in that list, it's a no-op for list_items.
+ * - If the item is already in a given list, that list is a no-op (not duplicated).
  */
 export async function addSearchResultToLibrary(
   result: SearchResultItem,
-  listId?: string
-): Promise<{ mediaId: string; alreadyInList: boolean }> {
+  listIds: string[]
+): Promise<{ mediaId: string; addedToListIds: string[]; alreadyInListIds: string[] }> {
+  if (!listIds || listIds.length === 0) {
+    throw new Error('At least one list must be selected before adding an item.');
+  }
+
   const db = await getDb();
 
   // 1. Reuse existing media_items row if this external item was already imported
@@ -287,31 +295,34 @@ export async function addSearchResultToLibrary(
     }
   }
 
-  // 2. Optionally link into a specific list
-  let alreadyInList = false;
+  // 2. Link into every selected list
+  const addedToListIds: string[] = [];
+  const alreadyInListIds: string[] = [];
 
-  if (listId) {
+  for (const listId of listIds) {
     const existingLink = await db.getFirstAsync<{ id: string }>(
       'SELECT id FROM list_items WHERE list_id = ? AND media_id = ?;',
       [listId, mediaId]
     );
 
     if (existingLink) {
-      alreadyInList = true;
-    } else {
-      const posRow = await db.getFirstAsync<{ maxPos: number | null }>(
-        'SELECT MAX(position_index) as maxPos FROM list_items WHERE list_id = ?;',
-        [listId]
-      );
-      const nextPosition = (posRow?.maxPos ?? -1) + 1;
-      const listItemId = generateId('li');
-
-      await db.runAsync(
-        `INSERT INTO list_items (id, list_id, media_id, position_index) VALUES (?, ?, ?, ?);`,
-        [listItemId, listId, mediaId, nextPosition]
-      );
+      alreadyInListIds.push(listId);
+      continue;
     }
+
+    const posRow = await db.getFirstAsync<{ maxPos: number | null }>(
+      'SELECT MAX(position_index) as maxPos FROM list_items WHERE list_id = ?;',
+      [listId]
+    );
+    const nextPosition = (posRow?.maxPos ?? -1) + 1;
+    const listItemId = generateId('li');
+
+    await db.runAsync(
+      `INSERT INTO list_items (id, list_id, media_id, position_index) VALUES (?, ?, ?, ?);`,
+      [listItemId, listId, mediaId, nextPosition]
+    );
+    addedToListIds.push(listId);
   }
 
-  return { mediaId, alreadyInList };
+  return { mediaId, addedToListIds, alreadyInListIds };
 }
