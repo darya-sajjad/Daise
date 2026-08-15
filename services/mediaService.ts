@@ -1,4 +1,6 @@
+// services/mediaService.ts
 import * as SQLite from 'expo-sqlite';
+import { getDb } from './database';
 
 export interface MediaItem {
   id: string;
@@ -9,7 +11,7 @@ export interface MediaItem {
   total_pages: number;
   current_page: number;
   status: 'PLAN_TO_WATCH' | 'WATCHING' | 'COMPLETED' | 'DROPPED';
-  bgColor?: string;
+  date_added: string;
   current_episode?: number;
   total_episodes?: number;
 }
@@ -20,61 +22,95 @@ export interface CustomList {
   emoji_icon: string;
   cover_color: string;
   list_type: 'ALL' | 'MOVIE' | 'TV' | 'BOOK';
+  is_ranked: number;
   created_at: string;
+  item_count?: number;
 }
 
-// Ensure the `lists` table has list_type support
-export async function initListsTable(): Promise<void> {
-  const db = await SQLite.openDatabaseAsync('daise.db');
-  await db.execAsync(`
-    CREATE TABLE IF NOT EXISTS lists (
-      id TEXT PRIMARY KEY NOT NULL,
-      title TEXT NOT NULL,
-      emoji_icon TEXT DEFAULT '🍿',
-      cover_color TEXT DEFAULT '#E2F1E7',
-      list_type TEXT DEFAULT 'ALL',
-      created_at TEXT NOT NULL
-    );
-  `);
-}
-
-// Fetch all lists from SQLite
+// Fetch all custom lists
 export async function getCustomLists(): Promise<CustomList[]> {
-  await initListsTable();
-  const db = await SQLite.openDatabaseAsync('daise.db');
-  const rows = await db.getAllAsync<CustomList>('SELECT * FROM lists ORDER BY created_at DESC;');
-  return rows;
+  const db = await getDb();
+  return await db.getAllAsync<CustomList>('SELECT * FROM lists ORDER BY created_at DESC;');
 }
 
-// Create a new list in SQLite
+// Create a new custom list — no longer takes `db` as a param, matches lists.tsx's call site
 export async function createCustomList(
   title: string,
-  emoji: string,
-  color: string,
-  listType: 'ALL' | 'MOVIE' | 'TV' | 'BOOK'
-): Promise<void> {
-  await initListsTable();
-  const db = await SQLite.openDatabaseAsync('daise.db');
+  emojiIcon: string = '🍿',
+  coverColor: string = '#E2F1E7',
+  listType: 'ALL' | 'MOVIE' | 'TV' | 'BOOK' = 'ALL'
+): Promise<CustomList | null> {
+  const db = await getDb();
   const id = Date.now().toString();
   const createdAt = new Date().toISOString();
 
-  await db.runAsync(
-    `INSERT INTO lists (id, title, emoji_icon, cover_color, list_type, created_at) VALUES (?, ?, ?, ?, ?, ?);`,
-    [id, title, emoji, color, listType, createdAt]
-  );
+  try {
+    await db.runAsync(
+      `INSERT INTO lists (id, title, emoji_icon, cover_color, list_type, created_at)
+       VALUES (?, ?, ?, ?, ?, ?);`,
+      [id, title, emojiIcon, coverColor, listType, createdAt]
+    );
+
+    return {
+      id,
+      title,
+      emoji_icon: emojiIcon,
+      cover_color: coverColor,
+      list_type: listType,
+      is_ranked: 0,
+      created_at: createdAt,
+      item_count: 0,
+    };
+  } catch (error) {
+    console.error('Failed to create custom list:', error);
+    return null;
+  }
 }
 
-// Fetch media items dynamically based on selected filter tag
-export async function getMediaItemsByFilter(filter: 'ALL' | 'IN_PROGRESS' | 'COMPLETED'): Promise<MediaItem[]> {
-  const db = await SQLite.openDatabaseAsync('daise.db');
-  
+// Get media item by specific ID
+export async function getMediaItemById(id: string): Promise<MediaItem | null> {
+  const db = await getDb();
+
+  const query = `
+    SELECT 
+      m.*,
+      t.current_episode,
+      t.total_episodes
+    FROM media_items m
+    LEFT JOIN tv_show_details t ON m.id = t.media_id
+    WHERE m.id = ?;
+  `;
+
+  const row = await db.getFirstAsync<any>(query, [id]);
+  if (!row) return null;
+
+  return {
+    id: row.id,
+    media_type: row.media_type,
+    title: row.title,
+    overview: row.overview,
+    poster_path: row.poster_path,
+    total_pages: row.total_pages || 0,
+    current_page: row.current_page || 0,
+    status: row.status,
+    date_added: row.date_added,
+    current_episode: row.current_episode || 0,
+    total_episodes: row.total_episodes || 0,
+  };
+}
+
+// Fetch Media Items Filtered by Tab Status
+export async function getMediaItemsByFilter(filter: 'IN_PROGRESS' | 'ALL' | 'COMPLETED' | 'DROPPED'): Promise<MediaItem[]> {
+  const db = await getDb();
+
   let whereClause = '';
   if (filter === 'IN_PROGRESS') {
     whereClause = "WHERE m.status IN ('PLAN_TO_WATCH', 'WATCHING')";
   } else if (filter === 'COMPLETED') {
     whereClause = "WHERE m.status = 'COMPLETED'";
+  } else if (filter === 'DROPPED') {
+    whereClause = "WHERE m.status = 'DROPPED'";
   }
-  // If filter === 'ALL', no WHERE clause needed
 
   const query = `
     SELECT 
@@ -97,75 +133,42 @@ export async function getMediaItemsByFilter(filter: 'ALL' | 'IN_PROGRESS' | 'COM
     total_pages: row.total_pages || 0,
     current_page: row.current_page || 0,
     status: row.status,
+    date_added: row.date_added,
     current_episode: row.current_episode || 0,
     total_episodes: row.total_episodes || 0,
   }));
 }
 
-// Increment progress by +1
-export async function incrementProgress(id: string, mediaType: string): Promise<void> {
-  const db = await SQLite.openDatabaseAsync('daise.db');
+// Update Media Status directly (e.g., COMPLETED, DROPPED, WATCHING)
+export async function updateMediaStatus(id: string, status: 'PLAN_TO_WATCH' | 'WATCHING' | 'COMPLETED' | 'DROPPED'): Promise<void> {
+  const db = await getDb();
+  const dateCompleted = status === 'COMPLETED' ? new Date().toISOString() : null;
+
+  await db.runAsync(
+    `UPDATE media_items SET status = ?, date_completed = ? WHERE id = ?;`,
+    [status, dateCompleted, id]
+  );
+}
+
+// Increment / Decrement episode or page progress
+export async function updateProgress(id: string, mediaType: string, change: number): Promise<void> {
+  const db = await getDb();
 
   if (mediaType === 'TV') {
     await db.runAsync(
-      `UPDATE tv_show_details SET current_episode = current_episode + 1 WHERE media_id = ?;`,
-      [id]
+      `UPDATE tv_show_details SET current_episode = MAX(0, current_episode + ?) WHERE media_id = ?;`,
+      [change, id]
     );
   } else if (mediaType === 'BOOK') {
     await db.runAsync(
-      `UPDATE media_items SET current_page = current_page + 1 WHERE id = ?;`,
-      [id]
+      `UPDATE media_items SET current_page = MAX(0, current_page + ?) WHERE id = ?;`,
+      [change, id]
     );
   }
 }
 
-// Mark an item as COMPLETED
-export async function markAsCompleted(id: string): Promise<void> {
-  const db = await SQLite.openDatabaseAsync('daise.db');
-  const dateCompleted = new Date().toISOString();
-
-  await db.runAsync(
-    `UPDATE media_items SET status = 'COMPLETED', date_completed = ? WHERE id = ?;`,
-    [dateCompleted, id]
-  );
-}
-
-// Delete item permanently
+// Delete Item
 export async function deleteMediaItem(id: string): Promise<void> {
-  const db = await SQLite.openDatabaseAsync('daise.db');
+  const db = await getDb();
   await db.runAsync(`DELETE FROM media_items WHERE id = ?;`, [id]);
-}
-
-// Seed initial sample data into SQLite
-export async function seedSampleDataIfEmpty(): Promise<void> {
-  const db = await SQLite.openDatabaseAsync('daise.db');
-  const countResult = await db.getFirstAsync<{ count: number }>(
-    'SELECT COUNT(*) as count FROM media_items;'
-  );
-
-  if (countResult && countResult.count === 0) {
-    const now = new Date().toISOString();
-
-    // Insert TV Show (In Progress)
-    await db.runAsync(
-      `INSERT INTO media_items (id, media_type, title, status, date_added) VALUES (?, ?, ?, ?, ?);`,
-      ['1', 'TV', 'Demon Slayer Season 4', 'WATCHING', now]
-    );
-    await db.runAsync(
-      `INSERT INTO tv_show_details (id, media_id, total_episodes, current_episode) VALUES (?, ?, ?, ?);`,
-      ['tv_1', '1', 8, 3]
-    );
-
-    // Insert Book (In Progress)
-    await db.runAsync(
-      `INSERT INTO media_items (id, media_type, title, total_pages, current_page, status, date_added) VALUES (?, ?, ?, ?, ?, ?, ?);`,
-      ['2', 'BOOK', 'Tomorrow, and Tomorrow', 416, 120, 'WATCHING', now]
-    );
-
-    // Insert Movie (Completed)
-    await db.runAsync(
-      `INSERT INTO media_items (id, media_type, title, status, date_added) VALUES (?, ?, ?, ?, ?);`,
-      ['3', 'MOVIE', 'Spirited Away', 'COMPLETED', now]
-    );
-  }
 }
