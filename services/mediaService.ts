@@ -1,15 +1,19 @@
+// services/mediaService.ts
 import * as SQLite from 'expo-sqlite';
+import { getDb } from './database';
+import { SearchResultItem } from './apiService';
 
 export interface MediaItem {
   id: string;
   media_type: 'MOVIE' | 'TV' | 'BOOK';
+  external_id?: string;
   title: string;
   overview?: string;
   poster_path?: string;
   total_pages: number;
   current_page: number;
   status: 'PLAN_TO_WATCH' | 'WATCHING' | 'COMPLETED' | 'DROPPED';
-  bgColor?: string;
+  date_added: string;
   current_episode?: number;
   total_episodes?: number;
 }
@@ -20,61 +24,95 @@ export interface CustomList {
   emoji_icon: string;
   cover_color: string;
   list_type: 'ALL' | 'MOVIE' | 'TV' | 'BOOK';
+  is_ranked: number;
   created_at: string;
+  item_count?: number;
 }
 
-// Ensure the `lists` table has list_type support
-export async function initListsTable(): Promise<void> {
-  const db = await SQLite.openDatabaseAsync('daise.db');
-  await db.execAsync(`
-    CREATE TABLE IF NOT EXISTS lists (
-      id TEXT PRIMARY KEY NOT NULL,
-      title TEXT NOT NULL,
-      emoji_icon TEXT DEFAULT '🍿',
-      cover_color TEXT DEFAULT '#E2F1E7',
-      list_type TEXT DEFAULT 'ALL',
-      created_at TEXT NOT NULL
-    );
-  `);
-}
-
-// Fetch all lists from SQLite
+// Fetch all custom lists
 export async function getCustomLists(): Promise<CustomList[]> {
-  await initListsTable();
-  const db = await SQLite.openDatabaseAsync('daise.db');
-  const rows = await db.getAllAsync<CustomList>('SELECT * FROM lists ORDER BY created_at DESC;');
-  return rows;
+  const db = await getDb();
+  return await db.getAllAsync<CustomList>('SELECT * FROM lists ORDER BY created_at DESC;');
 }
 
-// Create a new list in SQLite
+// Create a new custom list — no longer takes `db` as a param, matches lists.tsx's call site
 export async function createCustomList(
   title: string,
-  emoji: string,
-  color: string,
-  listType: 'ALL' | 'MOVIE' | 'TV' | 'BOOK'
-): Promise<void> {
-  await initListsTable();
-  const db = await SQLite.openDatabaseAsync('daise.db');
+  emojiIcon: string = '🍿',
+  coverColor: string = '#E2F1E7',
+  listType: 'ALL' | 'MOVIE' | 'TV' | 'BOOK' = 'ALL'
+): Promise<CustomList | null> {
+  const db = await getDb();
   const id = Date.now().toString();
   const createdAt = new Date().toISOString();
 
-  await db.runAsync(
-    `INSERT INTO lists (id, title, emoji_icon, cover_color, list_type, created_at) VALUES (?, ?, ?, ?, ?, ?);`,
-    [id, title, emoji, color, listType, createdAt]
-  );
+  try {
+    await db.runAsync(
+      `INSERT INTO lists (id, title, emoji_icon, cover_color, list_type, created_at)
+       VALUES (?, ?, ?, ?, ?, ?);`,
+      [id, title, emojiIcon, coverColor, listType, createdAt]
+    );
+
+    return {
+      id,
+      title,
+      emoji_icon: emojiIcon,
+      cover_color: coverColor,
+      list_type: listType,
+      is_ranked: 0,
+      created_at: createdAt,
+      item_count: 0,
+    };
+  } catch (error) {
+    console.error('Failed to create custom list:', error);
+    return null;
+  }
 }
 
-// Fetch media items dynamically based on selected filter tag
-export async function getMediaItemsByFilter(filter: 'ALL' | 'IN_PROGRESS' | 'COMPLETED'): Promise<MediaItem[]> {
-  const db = await SQLite.openDatabaseAsync('daise.db');
-  
+// Get media item by specific ID
+export async function getMediaItemById(id: string): Promise<MediaItem | null> {
+  const db = await getDb();
+
+  const query = `
+    SELECT 
+      m.*,
+      t.current_episode,
+      t.total_episodes
+    FROM media_items m
+    LEFT JOIN tv_show_details t ON m.id = t.media_id
+    WHERE m.id = ?;
+  `;
+
+  const row = await db.getFirstAsync<any>(query, [id]);
+  if (!row) return null;
+
+  return {
+    id: row.id,
+    media_type: row.media_type,
+    title: row.title,
+    overview: row.overview,
+    poster_path: row.poster_path,
+    total_pages: row.total_pages || 0,
+    current_page: row.current_page || 0,
+    status: row.status,
+    date_added: row.date_added,
+    current_episode: row.current_episode || 0,
+    total_episodes: row.total_episodes || 0,
+  };
+}
+
+// Fetch Media Items Filtered by Tab Status
+export async function getMediaItemsByFilter(filter: 'IN_PROGRESS' | 'ALL' | 'COMPLETED' | 'DROPPED'): Promise<MediaItem[]> {
+  const db = await getDb();
+
   let whereClause = '';
   if (filter === 'IN_PROGRESS') {
-    whereClause = "WHERE m.status IN ('PLAN_TO_WATCH', 'WATCHING')";
+    whereClause = "WHERE m.status = 'WATCHING'";
   } else if (filter === 'COMPLETED') {
     whereClause = "WHERE m.status = 'COMPLETED'";
+  } else if (filter === 'DROPPED') {
+    whereClause = "WHERE m.status = 'DROPPED'";
   }
-  // If filter === 'ALL', no WHERE clause needed
 
   const query = `
     SELECT 
@@ -97,75 +135,194 @@ export async function getMediaItemsByFilter(filter: 'ALL' | 'IN_PROGRESS' | 'COM
     total_pages: row.total_pages || 0,
     current_page: row.current_page || 0,
     status: row.status,
+    date_added: row.date_added,
     current_episode: row.current_episode || 0,
     total_episodes: row.total_episodes || 0,
   }));
 }
 
-// Increment progress by +1
-export async function incrementProgress(id: string, mediaType: string): Promise<void> {
-  const db = await SQLite.openDatabaseAsync('daise.db');
+// Update Media Status directly (e.g., COMPLETED, DROPPED, WATCHING)
+export async function updateMediaStatus(id: string, status: 'PLAN_TO_WATCH' | 'WATCHING' | 'COMPLETED' | 'DROPPED'): Promise<void> {
+  const db = await getDb();
+  const dateCompleted = status === 'COMPLETED' ? new Date().toISOString() : null;
+
+  await db.runAsync(
+    `UPDATE media_items SET status = ?, date_completed = ? WHERE id = ?;`,
+    [status, dateCompleted, id]
+  );
+}
+
+// Increment / Decrement episode or page progress
+export async function updateProgress(id: string, mediaType: string, change: number): Promise<void> {
+  const db = await getDb();
 
   if (mediaType === 'TV') {
     await db.runAsync(
-      `UPDATE tv_show_details SET current_episode = current_episode + 1 WHERE media_id = ?;`,
-      [id]
+      `UPDATE tv_show_details SET current_episode = MAX(0, current_episode + ?) WHERE media_id = ?;`,
+      [change, id]
     );
   } else if (mediaType === 'BOOK') {
     await db.runAsync(
-      `UPDATE media_items SET current_page = current_page + 1 WHERE id = ?;`,
-      [id]
+      `UPDATE media_items SET current_page = MAX(0, current_page + ?) WHERE id = ?;`,
+      [change, id]
     );
   }
 }
 
-// Mark an item as COMPLETED
-export async function markAsCompleted(id: string): Promise<void> {
-  const db = await SQLite.openDatabaseAsync('daise.db');
-  const dateCompleted = new Date().toISOString();
-
-  await db.runAsync(
-    `UPDATE media_items SET status = 'COMPLETED', date_completed = ? WHERE id = ?;`,
-    [dateCompleted, id]
-  );
-}
-
-// Delete item permanently
+// Delete Item
 export async function deleteMediaItem(id: string): Promise<void> {
-  const db = await SQLite.openDatabaseAsync('daise.db');
+  const db = await getDb();
   await db.runAsync(`DELETE FROM media_items WHERE id = ?;`, [id]);
 }
 
-// Seed initial sample data into SQLite
-export async function seedSampleDataIfEmpty(): Promise<void> {
-  const db = await SQLite.openDatabaseAsync('daise.db');
-  const countResult = await db.getFirstAsync<{ count: number }>(
-    'SELECT COUNT(*) as count FROM media_items;'
+// DEV ONLY: wipe all rows from every table (does not drop tables/schema)
+export async function clearAllData(): Promise<void> {
+  const db = await getDb();
+  await db.execAsync(`
+    DELETE FROM media_tags;
+    DELETE FROM tags;
+    DELETE FROM list_items;
+    DELETE FROM lists;
+    DELETE FROM tv_show_details;
+    DELETE FROM media_items;
+  `);
+}
+
+// Fetch a single list's metadata (title, emoji, color, type, etc.)
+export async function getListById(id: string): Promise<CustomList | null> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<CustomList>('SELECT * FROM lists WHERE id = ?;', [id]);
+  return row ?? null;
+}
+
+// Fetch all media items belonging to a list, in their saved order
+export async function getListItems(listId: string): Promise<MediaItem[]> {
+  const db = await getDb();
+
+  const query = `
+    SELECT 
+      m.*,
+      t.current_episode,
+      t.total_episodes
+    FROM list_items li
+    JOIN media_items m ON li.media_id = m.id
+    LEFT JOIN tv_show_details t ON m.id = t.media_id
+    WHERE li.list_id = ?
+    ORDER BY li.position_index ASC;
+  `;
+
+  const rows = await db.getAllAsync<any>(query, [listId]);
+  return rows.map((row) => ({
+    id: row.id,
+    media_type: row.media_type,
+    title: row.title,
+    overview: row.overview,
+    poster_path: row.poster_path,
+    total_pages: row.total_pages || 0,
+    current_page: row.current_page || 0,
+    status: row.status,
+    date_added: row.date_added,
+    current_episode: row.current_episode || 0,
+    total_episodes: row.total_episodes || 0,
+  }));
+}
+
+// Small helper for generating collision-resistant IDs when adding items quickly from search
+function generateId(prefix?: string): string {
+  const rand = Math.random().toString(36).slice(2, 8);
+  return prefix ? `${prefix}_${Date.now()}_${rand}` : `${Date.now()}_${rand}`;
+}
+
+/**
+ * Save a search result (from TMDb/Google Books via apiService) into the local library,
+ * and link it into one or more lists in the same step.
+ *
+ * List membership is now mandatory — every media item must belong to at least
+ * one list, so this throws if listIds is empty. Callers (search.tsx) are
+ * responsible for collecting at least one list before calling this.
+ *
+ * - If this external item was already imported before (matched by external_id),
+ *   it reuses the existing media_items row instead of creating a duplicate.
+ * - If the item is already in a given list, that list is a no-op (not duplicated).
+ */
+export async function addSearchResultToLibrary(
+  result: SearchResultItem,
+  listIds: string[]
+): Promise<{ mediaId: string; addedToListIds: string[]; alreadyInListIds: string[] }> {
+  if (!listIds || listIds.length === 0) {
+    throw new Error('At least one list must be selected before adding an item.');
+  }
+
+  const db = await getDb();
+
+  // 1. Reuse existing media_items row if this external item was already imported
+  const existing = await db.getFirstAsync<{ id: string }>(
+    'SELECT id FROM media_items WHERE external_id = ?;',
+    [result.id]
   );
 
-  if (countResult && countResult.count === 0) {
-    const now = new Date().toISOString();
+  let mediaId: string;
 
-    // Insert TV Show (In Progress)
+  if (existing) {
+    mediaId = existing.id;
+  } else {
+    mediaId = generateId(result.media_type.toLowerCase());
+    const dateAdded = new Date().toISOString();
+
     await db.runAsync(
-      `INSERT INTO media_items (id, media_type, title, status, date_added) VALUES (?, ?, ?, ?, ?);`,
-      ['1', 'TV', 'Demon Slayer Season 4', 'WATCHING', now]
-    );
-    await db.runAsync(
-      `INSERT INTO tv_show_details (id, media_id, total_episodes, current_episode) VALUES (?, ?, ?, ?);`,
-      ['tv_1', '1', 8, 3]
+      `INSERT INTO media_items 
+        (id, media_type, external_id, title, overview, poster_path, release_date, total_pages, status, date_added)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PLAN_TO_WATCH', ?);`,
+      [
+        mediaId,
+        result.media_type,
+        result.id,
+        result.title,
+        result.overview ?? null,
+        result.poster_path ?? null,
+        result.release_date ?? null,
+        result.total_pages ?? 0,
+        dateAdded,
+      ]
     );
 
-    // Insert Book (In Progress)
-    await db.runAsync(
-      `INSERT INTO media_items (id, media_type, title, total_pages, current_page, status, date_added) VALUES (?, ?, ?, ?, ?, ?, ?);`,
-      ['2', 'BOOK', 'Tomorrow, and Tomorrow', 416, 120, 'WATCHING', now]
-    );
-
-    // Insert Movie (Completed)
-    await db.runAsync(
-      `INSERT INTO media_items (id, media_type, title, status, date_added) VALUES (?, ?, ?, ?, ?);`,
-      ['3', 'MOVIE', 'Spirited Away', 'COMPLETED', now]
-    );
+    if (result.media_type === 'TV') {
+      const tvDetailId = generateId('tvd');
+      await db.runAsync(
+        `INSERT INTO tv_show_details (id, media_id, total_episodes) VALUES (?, ?, ?);`,
+        [tvDetailId, mediaId, result.total_episodes ?? 0]
+      );
+    }
   }
+
+  // 2. Link into every selected list
+  const addedToListIds: string[] = [];
+  const alreadyInListIds: string[] = [];
+
+  for (const listId of listIds) {
+    const existingLink = await db.getFirstAsync<{ id: string }>(
+      'SELECT id FROM list_items WHERE list_id = ? AND media_id = ?;',
+      [listId, mediaId]
+    );
+
+    if (existingLink) {
+      alreadyInListIds.push(listId);
+      continue;
+    }
+
+    const posRow = await db.getFirstAsync<{ maxPos: number | null }>(
+      'SELECT MAX(position_index) as maxPos FROM list_items WHERE list_id = ?;',
+      [listId]
+    );
+    const nextPosition = (posRow?.maxPos ?? -1) + 1;
+    const listItemId = generateId('li');
+
+    await db.runAsync(
+      `INSERT INTO list_items (id, list_id, media_id, position_index) VALUES (?, ?, ?, ?);`,
+      [listItemId, listId, mediaId, nextPosition]
+    );
+    addedToListIds.push(listId);
+  }
+
+  return { mediaId, addedToListIds, alreadyInListIds };
 }

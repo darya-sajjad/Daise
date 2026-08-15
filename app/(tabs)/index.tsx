@@ -1,27 +1,24 @@
-import React, { useState, useEffect } from 'react';
+// app/(tabs)/index.tsx
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   ScrollView,
-  Modal,
-  Pressable,
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter, useFocusEffect } from 'expo-router';
 
 import {
   MediaItem,
   getMediaItemsByFilter,
-  incrementProgress,
-  markAsCompleted,
-  deleteMediaItem,
-  seedSampleDataIfEmpty,
+  updateProgress,
 } from '../../services/mediaService';
 
-type FilterType = 'IN_PROGRESS' | 'ALL' | 'COMPLETED';
+type FilterType = 'IN_PROGRESS' | 'ALL' | 'COMPLETED' | 'DROPPED';
 
 const TYPE_COLORS: Record<string, string> = {
   TV: '#FFF3B0',     // Muted Butter Yellow
@@ -30,25 +27,25 @@ const TYPE_COLORS: Record<string, string> = {
 };
 
 export default function HomeScreen() {
-  const [isDarkMode, setIsDarkMode] = useState(false);
-  const [activeFilter, setActiveFilter] = useState<FilterType>('IN_PROGRESS'); // Defaults to 'IN_PROGRESS' on open
+  const router = useRouter();
+  const [activeFilter, setActiveFilter] = useState<FilterType>('IN_PROGRESS');
   const [items, setItems] = useState<MediaItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedItem, setSelectedItem] = useState<MediaItem | null>(null);
-  const [isModalVisible, setIsModalVisible] = useState(false);
 
-  useEffect(() => {
-    initAndLoad();
-  }, [activeFilter]);
+  // Reload data every time screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      loadData();
+    }, [activeFilter])
+  );
 
-  const initAndLoad = async () => {
+  const loadData = async () => {
     try {
       setLoading(true);
-      await seedSampleDataIfEmpty();
       const filteredData = await getMediaItemsByFilter(activeFilter);
       setItems(filteredData);
     } catch (error) {
-      console.error('Error fetching filtered items:', error);
+      console.error('Error fetching items:', error);
     } finally {
       setLoading(false);
     }
@@ -56,102 +53,60 @@ export default function HomeScreen() {
 
   const handleIncrement = async (item: MediaItem) => {
     try {
-      await incrementProgress(item.id, item.media_type);
-      const updatedData = await getMediaItemsByFilter(activeFilter);
-      setItems(updatedData);
+      await updateProgress(item.id, item.media_type, 1);
+      loadData();
     } catch (error) {
       console.error('Failed to increment progress:', error);
     }
   };
 
-  const handleMarkCompleted = async () => {
-    if (!selectedItem) return;
-    try {
-      await markAsCompleted(selectedItem.id);
-      closeModal();
-      initAndLoad();
-    } catch (error) {
-      console.error('Failed to mark as completed:', error);
-    }
-  };
-
-  const handleDeleteItem = async () => {
-    if (!selectedItem) return;
-    try {
-      await deleteMediaItem(selectedItem.id);
-      closeModal();
-      initAndLoad();
-    } catch (error) {
-      console.error('Failed to delete item:', error);
-    }
-  };
-
-  const handleLongPress = (item: MediaItem) => {
-    setSelectedItem(item);
-    setIsModalVisible(true);
-  };
-
-  const closeModal = () => {
-    setIsModalVisible(false);
-    setSelectedItem(null);
-  };
-
-  const containerBg = isDarkMode ? '#121212' : '#FDFBF7';
-  const textColor = isDarkMode ? '#FFFFFF' : '#1A1A1A';
-  const cardBorderColor = isDarkMode ? '#FFFFFF' : '#1A1A1A';
-
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: containerBg }]}>
+    <SafeAreaView style={styles.safeArea}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        {/* HEADER */}
+        {/* HEADER WITH + ADD BUTTON */}
         <View style={styles.header}>
-          <Text style={[styles.logoText, { color: textColor }]}>DAISE 🌸</Text>
+          <Text style={styles.logoText}>DAISE 🌸</Text>
           <TouchableOpacity
-            style={[styles.themeToggle, { borderColor: textColor }]}
-            onPress={() => setIsDarkMode(!isDarkMode)}
+            style={styles.addButton}
+            onPress={() => router.push('/search')}
           >
-            <Ionicons
-              name={isDarkMode ? 'sunny' : 'moon'}
-              size={20}
-              color={textColor}
-            />
+            <Ionicons name="add" size={18} color="#FFFFFF" />
+            <Text style={styles.addButtonText}>Add</Text>
           </TouchableOpacity>
         </View>
 
-        {/* HORIZONTALLY SCROLLABLE FILTER PILLS */}
+        {/* SCROLLABLE FILTER PILLS */}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.filterBar}
         >
           <TouchableOpacity
-            style={[
-              styles.pill,
-              activeFilter === 'IN_PROGRESS' && styles.activePill,
-            ]}
+            style={[styles.pill, activeFilter === 'IN_PROGRESS' && styles.activePill]}
             onPress={() => setActiveFilter('IN_PROGRESS')}
           >
             <Text style={styles.pillText}>⚡ In Progress</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[
-              styles.pill,
-              activeFilter === 'ALL' && styles.activePill,
-            ]}
+            style={[styles.pill, activeFilter === 'ALL' && styles.activePill]}
             onPress={() => setActiveFilter('ALL')}
           >
             <Text style={styles.pillText}>✨ All Items</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[
-              styles.pill,
-              activeFilter === 'COMPLETED' && styles.activePill,
-            ]}
+            style={[styles.pill, activeFilter === 'COMPLETED' && styles.activePill]}
             onPress={() => setActiveFilter('COMPLETED')}
           >
             <Text style={styles.pillText}>🎉 Completed</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.pill, activeFilter === 'DROPPED' && styles.activePill]}
+            onPress={() => setActiveFilter('DROPPED')}
+          >
+            <Text style={styles.pillText}>📦 Dropped</Text>
           </TouchableOpacity>
         </ScrollView>
 
@@ -160,8 +115,9 @@ export default function HomeScreen() {
           <ActivityIndicator size="large" color="#FF8A8A" style={{ marginTop: 40 }} />
         ) : items.length === 0 ? (
           <View style={styles.emptyContainer}>
-            <Text style={[styles.emptyText, { color: textColor }]}>
-              No items found in this section! 🍿
+            <Text style={styles.emptyText}>No items in this filter yet! 🍿</Text>
+            <Text style={styles.emptySubText}>
+              Tap '+ Add' above to search and add media into your lists.
             </Text>
           </View>
         ) : (
@@ -171,19 +127,19 @@ export default function HomeScreen() {
               return (
                 <TouchableOpacity
                   key={item.id}
-                  activeOpacity={0.8}
-                  onLongPress={() => handleLongPress(item)}
-                  style={[
-                    styles.card,
-                    { backgroundColor: cardBg, borderColor: cardBorderColor },
-                  ]}
+                  activeOpacity={0.85}
+                  onPress={() => router.push(`/${item.id}`)}
+                  style={[styles.card, { backgroundColor: cardBg }]}
                 >
                   <View style={styles.cardHeader}>
                     <Text style={styles.typeBadge}>{item.media_type}</Text>
                     {item.status !== 'COMPLETED' && item.media_type !== 'MOVIE' && (
                       <TouchableOpacity
                         style={styles.incrementBtn}
-                        onPress={() => handleIncrement(item)}
+                        onPress={(e) => {
+                          e.stopPropagation();
+                          handleIncrement(item);
+                        }}
                       >
                         <Text style={styles.incrementBtnText}>+1</Text>
                       </TouchableOpacity>
@@ -195,6 +151,8 @@ export default function HomeScreen() {
                   <Text style={styles.progressText}>
                     {item.status === 'COMPLETED'
                       ? 'Completed 🎉'
+                      : item.status === 'DROPPED'
+                      ? 'Dropped 📦'
                       : item.media_type === 'BOOK'
                       ? `Page ${item.current_page} of ${item.total_pages}`
                       : item.media_type === 'TV'
@@ -207,56 +165,12 @@ export default function HomeScreen() {
           </View>
         )}
       </ScrollView>
-
-      {/* LONG-PRESS OPTIONS MODAL */}
-      <Modal visible={isModalVisible} transparent animationType="fade">
-        <Pressable style={styles.modalOverlay} onPress={closeModal}>
-          <Pressable style={styles.modalCard}>
-            <Text style={styles.modalTitle}>{selectedItem?.title}</Text>
-
-            {selectedItem?.status !== 'COMPLETED' && (
-              <TouchableOpacity style={styles.modalOption} onPress={handleMarkCompleted}>
-                <Ionicons name="checkmark-circle-outline" size={20} color="#1A1A1A" />
-                <Text style={styles.modalOptionText}>Mark as Completed</Text>
-              </TouchableOpacity>
-            )}
-
-            {selectedItem?.media_type !== 'MOVIE' && (
-              <TouchableOpacity
-                style={styles.modalOption}
-                onPress={() => {
-                  closeModal();
-                  alert(`Navigating to details for ${selectedItem?.title}`);
-                }}
-              >
-                <Ionicons name="add-circle-outline" size={20} color="#1A1A1A" />
-                <Text style={styles.modalOptionText}>
-                  Update {selectedItem?.media_type === 'BOOK' ? 'Page' : 'Episode'} Details
-                </Text>
-              </TouchableOpacity>
-            )}
-
-            <TouchableOpacity style={styles.modalOption} onPress={closeModal}>
-              <Ionicons name="bookmark-outline" size={20} color="#1A1A1A" />
-              <Text style={styles.modalOptionText}>Add to Custom List</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.modalOption, styles.deleteOption]}
-              onPress={handleDeleteItem}
-            >
-              <Ionicons name="trash-outline" size={20} color="#D9534F" />
-              <Text style={[styles.modalOptionText, { color: '#D9534F' }]}>Delete Item</Text>
-            </TouchableOpacity>
-          </Pressable>
-        </Pressable>
-      </Modal>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1 },
+  safeArea: { flex: 1, backgroundColor: '#FDFBF7' },
   scrollContent: { padding: 20, paddingBottom: 110 },
   header: {
     flexDirection: 'row',
@@ -264,15 +178,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 20,
   },
-  logoText: { fontSize: 26, fontWeight: '900', letterSpacing: 0.5 },
-  themeToggle: {
-    padding: 8,
-    borderRadius: 12,
-    borderWidth: 2,
+  logoText: { fontSize: 26, fontWeight: '900', color: '#1A1A1A' },
+  addButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1A1A1A',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 16,
+    gap: 4,
   },
+  addButtonText: { color: '#FFFFFF', fontWeight: '800', fontSize: 14 },
   filterBar: {
     flexDirection: 'row',
-    gap: 12,
+    gap: 10,
     marginBottom: 20,
     paddingRight: 10,
   },
@@ -285,7 +204,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
   },
   activePill: {
-    backgroundColor: '#FFB6B6', // Coral active highlight
+    backgroundColor: '#FFB6B6',
     shadowColor: '#1A1A1A',
     shadowOffset: { width: 2, height: 2 },
     shadowOpacity: 1,
@@ -297,6 +216,7 @@ const styles = StyleSheet.create({
   card: {
     borderRadius: 20,
     borderWidth: 2,
+    borderColor: '#1A1A1A',
     padding: 16,
     shadowColor: '#1A1A1A',
     shadowOffset: { width: 3, height: 3 },
@@ -331,39 +251,6 @@ const styles = StyleSheet.create({
   cardTitle: { fontSize: 18, fontWeight: '800', color: '#1A1A1A', marginBottom: 6 },
   progressText: { fontSize: 13, color: '#444444', fontWeight: '600' },
   emptyContainer: { padding: 30, alignItems: 'center' },
-  emptyText: { fontSize: 15, fontWeight: '600', textAlign: 'center' },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-  },
-  modalCard: {
-    width: '100%',
-    backgroundColor: '#FDFBF7',
-    borderRadius: 24,
-    borderWidth: 2,
-    borderColor: '#1A1A1A',
-    padding: 20,
-    gap: 12,
-    shadowColor: '#1A1A1A',
-    shadowOffset: { width: 4, height: 4 },
-    shadowOpacity: 1,
-    shadowRadius: 0,
-  },
-  modalTitle: { fontSize: 18, fontWeight: '800', color: '#1A1A1A', marginBottom: 8 },
-  modalOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: '#1A1A1A',
-  },
-  modalOptionText: { fontSize: 14, fontWeight: '700', color: '#1A1A1A' },
-  deleteOption: { backgroundColor: '#FFD1D1' },
+  emptyText: { fontSize: 16, fontWeight: '800', textAlign: 'center', color: '#1A1A1A' },
+  emptySubText: { fontSize: 13, color: '#666', textAlign: 'center', marginTop: 6 },
 });

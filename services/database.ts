@@ -1,6 +1,12 @@
 import * as SQLite from 'expo-sqlite';
 
+let dbInstance: SQLite.SQLiteDatabase | null = null;
+
 export async function initDatabase() {
+  if (dbInstance) {
+    return dbInstance;
+  }
+
   const db = await SQLite.openDatabaseAsync('daise.db');
 
   // Enable foreign keys and create core tables matching the PRD schema
@@ -41,6 +47,7 @@ export async function initDatabase() {
       title TEXT NOT NULL,
       emoji_icon TEXT DEFAULT '🍿',
       cover_color TEXT DEFAULT '#E2F1E7',
+      list_type TEXT DEFAULT 'ALL',
       is_ranked INTEGER DEFAULT 0,
       created_at TEXT NOT NULL
     );
@@ -70,5 +77,14 @@ export async function initDatabase() {
   `);
 
   console.log('Database initialized successfully!');
+  dbInstance = db;
   return db;
+}
+
+// Helper to access the initialized database instance across services
+export async function getDb() {
+  if (!dbInstance) {
+    return await initDatabase();
+  }
+  return dbInstance;
 }
