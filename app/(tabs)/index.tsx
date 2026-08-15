@@ -127,21 +127,21 @@ export default function HomeScreen() {
           <TouchableOpacity
             style={[
               styles.pill,
-              activeFilter === 'ALL' && styles.activePill,
+              activeFilter === 'IN_PROGRESS' && styles.activePill,
             ]}
-            onPress={() => setActiveFilter('ALL')}
+            onPress={() => setActiveFilter('IN_PROGRESS')}
           >
-            <Text style={styles.pillText}>All Items</Text>
+            <Text style={styles.pillText}>⚡ In Progress</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             style={[
               styles.pill,
-              activeFilter === 'IN_PROGRESS' && styles.activePill,
+              activeFilter === 'ALL' && styles.activePill,
             ]}
-            onPress={() => setActiveFilter('IN_PROGRESS')}
+            onPress={() => setActiveFilter('ALL')}
           >
-            <Text style={styles.pillText}>In Progress</Text>
+            <Text style={styles.pillText}>✨ All Items</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -151,7 +151,7 @@ export default function HomeScreen() {
             ]}
             onPress={() => setActiveFilter('COMPLETED')}
           >
-            <Text style={styles.pillText}>Completed</Text>
+            <Text style={styles.pillText}>🎉 Completed</Text>
           </TouchableOpacity>
         </ScrollView>
 

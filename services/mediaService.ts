@@ -14,6 +14,56 @@ export interface MediaItem {
   total_episodes?: number;
 }
 
+export interface CustomList {
+  id: string;
+  title: string;
+  emoji_icon: string;
+  cover_color: string;
+  list_type: 'ALL' | 'MOVIE' | 'TV' | 'BOOK';
+  created_at: string;
+}
+
+// Ensure the `lists` table has list_type support
+export async function initListsTable(): Promise<void> {
+  const db = await SQLite.openDatabaseAsync('daise.db');
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS lists (
+      id TEXT PRIMARY KEY NOT NULL,
+      title TEXT NOT NULL,
+      emoji_icon TEXT DEFAULT '🍿',
+      cover_color TEXT DEFAULT '#E2F1E7',
+      list_type TEXT DEFAULT 'ALL',
+      created_at TEXT NOT NULL
+    );
+  `);
+}
+
+// Fetch all lists from SQLite
+export async function getCustomLists(): Promise<CustomList[]> {
+  await initListsTable();
+  const db = await SQLite.openDatabaseAsync('daise.db');
+  const rows = await db.getAllAsync<CustomList>('SELECT * FROM lists ORDER BY created_at DESC;');
+  return rows;
+}
+
+// Create a new list in SQLite
+export async function createCustomList(
+  title: string,
+  emoji: string,
+  color: string,
+  listType: 'ALL' | 'MOVIE' | 'TV' | 'BOOK'
+): Promise<void> {
+  await initListsTable();
+  const db = await SQLite.openDatabaseAsync('daise.db');
+  const id = Date.now().toString();
+  const createdAt = new Date().toISOString();
+
+  await db.runAsync(
+    `INSERT INTO lists (id, title, emoji_icon, cover_color, list_type, created_at) VALUES (?, ?, ?, ?, ?, ?);`,
+    [id, title, emoji, color, listType, createdAt]
+  );
+}
+
 // Fetch media items dynamically based on selected filter tag
 export async function getMediaItemsByFilter(filter: 'ALL' | 'IN_PROGRESS' | 'COMPLETED'): Promise<MediaItem[]> {
   const db = await SQLite.openDatabaseAsync('daise.db');
