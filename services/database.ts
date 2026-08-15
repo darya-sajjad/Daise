@@ -47,6 +47,7 @@ export async function initDatabase() {
       title TEXT NOT NULL,
       emoji_icon TEXT DEFAULT '🍿',
       cover_color TEXT DEFAULT '#E2F1E7',
+      list_type TEXT DEFAULT 'ALL',
       is_ranked INTEGER DEFAULT 0,
       created_at TEXT NOT NULL
     );

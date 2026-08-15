@@ -19,17 +19,18 @@ export default function RootLayout() {
       <Stack.Screen 
         name="[id]" 
         options={{ 
-          headerShown: true, 
+          headerShown: false, 
           title: 'Details',
           animation: 'slide_from_right' 
         }} 
       />
+
+      {/* List Detail Screen - custom header built inside the component */}
       <Stack.Screen 
-        name="search" 
+        name="list/[id]" 
         options={{ 
-          presentation: 'modal', 
-          headerShown: true, 
-          title: 'Add Media' 
+          headerShown: false, 
+          animation: 'slide_from_right' 
         }} 
       />
     </Stack>

@@ -68,7 +68,7 @@ export default function HomeScreen() {
           <Text style={styles.logoText}>DAISE 🌸</Text>
           <TouchableOpacity
             style={styles.addButton}
-            onPress={() => router.push('./search.tsx')}
+            onPress={() => router.push('/search')}
           >
             <Ionicons name="add" size={18} color="#FFFFFF" />
             <Text style={styles.addButtonText}>Add</Text>
@@ -128,7 +128,7 @@ export default function HomeScreen() {
                 <TouchableOpacity
                   key={item.id}
                   activeOpacity={0.85}
-                  onPress={() => router.push(`/media/${item.id}`)}
+                  onPress={() => router.push(`/${item.id}`)}
                   style={[styles.card, { backgroundColor: cardBg }]}
                 >
                   <View style={styles.cardHeader}>

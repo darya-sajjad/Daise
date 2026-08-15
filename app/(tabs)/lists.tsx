@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -12,6 +12,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { getCustomLists, createCustomList, CustomList } from '../../services/mediaService';
+import { useRouter, useFocusEffect } from 'expo-router';
 
 const LIST_TYPES = [
   { label: '🍿 Mixed / Any', value: 'ALL' },
@@ -23,6 +24,7 @@ const LIST_TYPES = [
 const PASTEL_COLORS = ['#E2F1E7', '#FFF3B0', '#FFB6B6', '#D1E8FF', '#F3D1FF'];
 
 export default function ListsScreen() {
+  const router = useRouter();
   const [lists, setLists] = useState<CustomList[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   
@@ -32,9 +34,11 @@ export default function ListsScreen() {
   const [selectedColor, setSelectedColor] = useState(PASTEL_COLORS[0]);
   const [selectedType, setSelectedType] = useState<'ALL' | 'MOVIE' | 'TV' | 'BOOK'>('ALL');
 
-  useEffect(() => {
-    loadLists();
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      loadLists();
+    }, [])
+  );
 
   const loadLists = async () => {
     const fetchedLists = await getCustomLists();
@@ -70,7 +74,7 @@ export default function ListsScreen() {
               <TouchableOpacity
                 key={item.id}
                 style={[styles.listCard, { backgroundColor: item.cover_color }]}
-                onPress={() => alert(`Opened list: ${item.title} (${item.list_type} restriction)`)}
+                onPress={() => router.push(`/list/${item.id}`)}
               >
                 <Text style={styles.cardEmoji}>{item.emoji_icon}</Text>
                 <Text style={styles.cardTitle}>{item.title}</Text>
