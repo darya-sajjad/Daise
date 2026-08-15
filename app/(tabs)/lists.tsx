@@ -8,6 +8,8 @@ import {
   Modal,
   TextInput,
   Pressable,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -30,7 +32,6 @@ export default function ListsScreen() {
   
   // New List Form State
   const [title, setTitle] = useState('');
-  const [emoji, setEmoji] = useState('🍿');
   const [selectedColor, setSelectedColor] = useState(PASTEL_COLORS[0]);
   const [selectedType, setSelectedType] = useState<'ALL' | 'MOVIE' | 'TV' | 'BOOK'>('ALL');
 
@@ -47,7 +48,7 @@ export default function ListsScreen() {
 
   const handleCreateList = async () => {
     if (!title.trim()) return;
-    await createCustomList(title, emoji, selectedColor, selectedType);
+    await createCustomList(title, '🍿', selectedColor, selectedType);
     setTitle('');
     setIsModalOpen(false);
     loadLists();
@@ -76,7 +77,6 @@ export default function ListsScreen() {
                 style={[styles.listCard, { backgroundColor: item.cover_color }]}
                 onPress={() => router.push(`/list/${item.id}`)}
               >
-                <Text style={styles.cardEmoji}>{item.emoji_icon}</Text>
                 <Text style={styles.cardTitle}>{item.title}</Text>
                 <Text style={styles.cardBadge}>
                   {item.list_type === 'ALL' ? 'Mixed' : item.list_type}
@@ -89,72 +89,64 @@ export default function ListsScreen() {
 
       {/* CREATE LIST MODAL SHEET */}
       <Modal visible={isModalOpen} transparent animationType="slide">
-        <Pressable style={styles.modalOverlay} onPress={() => setIsModalOpen(false)}>
-          <Pressable style={styles.modalSheet}>
-            <Text style={styles.modalHeading}>Create New List</Text>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+        >
+          <Pressable style={styles.modalOverlay} onPress={() => setIsModalOpen(false)}>
+            <Pressable style={styles.modalSheet}>
+              <Text style={styles.modalHeading}>Create New List</Text>
 
-            {/* List Title Input */}
-            <TextInput
-              style={styles.input}
-              placeholder="List Title (e.g. Favorite Movies)"
-              placeholderTextColor="#888"
-              value={title}
-              onChangeText={setTitle}
-            />
+              {/* List Title Input */}
+              <TextInput
+                style={styles.input}
+                placeholder="List Title (e.g. Favorite Movies)"
+                placeholderTextColor="#888"
+                value={title}
+                onChangeText={setTitle}
+              />
 
-            {/* Emoji Selection */}
-            <Text style={styles.label}>Choose Emoji Icon:</Text>
-            <View style={styles.row}>
-              {['🍿', '🎬', '📺', '📚', '💖', '⭐'].map((e) => (
-                <TouchableOpacity
-                  key={e}
-                  style={[styles.emojiChip, emoji === e && styles.activeChip]}
-                  onPress={() => setEmoji(e)}
-                >
-                  <Text style={{ fontSize: 20 }}>{e}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+              {/* List Type Restriction */}
+              <Text style={styles.label}>Allowed Media Type:</Text>
+              <View style={styles.typeContainer}>
+                {LIST_TYPES.map((t) => (
+                  <TouchableOpacity
+                    key={t.value}
+                    style={[
+                      styles.typeChip,
+                      selectedType === t.value && styles.activeTypeChip,
+                    ]}
+                    onPress={() => setSelectedType(t.value)}
+                  >
+                    <Text style={styles.typeText}>{t.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
 
-            {/* List Type Restriction */}
-            <Text style={styles.label}>Allowed Media Type:</Text>
-            <View style={styles.typeContainer}>
-              {LIST_TYPES.map((t) => (
-                <TouchableOpacity
-                  key={t.value}
-                  style={[
-                    styles.typeChip,
-                    selectedType === t.value && styles.activeTypeChip,
-                  ]}
-                  onPress={() => setSelectedType(t.value)}
-                >
-                  <Text style={styles.typeText}>{t.label}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+              {/* Color Selection */}
+              <Text style={styles.label}>Card Theme Color:</Text>
+              <View style={styles.row}>
+                {PASTEL_COLORS.map((c) => (
+                  <TouchableOpacity
+                    key={c}
+                    style={[
+                      styles.colorCircle,
+                      { backgroundColor: c },
+                      selectedColor === c && styles.activeColorCircle,
+                    ]}
+                    onPress={() => setSelectedColor(c)}
+                  />
+                ))}
+              </View>
 
-            {/* Color Selection */}
-            <Text style={styles.label}>Card Theme Color:</Text>
-            <View style={styles.row}>
-              {PASTEL_COLORS.map((c) => (
-                <TouchableOpacity
-                  key={c}
-                  style={[
-                    styles.colorCircle,
-                    { backgroundColor: c },
-                    selectedColor === c && styles.activeColorCircle,
-                  ]}
-                  onPress={() => setSelectedColor(c)}
-                />
-              ))}
-            </View>
-
-            {/* Submit Button */}
-            <TouchableOpacity style={styles.submitBtn} onPress={handleCreateList}>
-              <Text style={styles.submitBtnText}>Save List</Text>
-            </TouchableOpacity>
+              {/* Submit Button */}
+              <TouchableOpacity style={styles.submitBtn} onPress={handleCreateList}>
+                <Text style={styles.submitBtnText}>Save List</Text>
+              </TouchableOpacity>
+            </Pressable>
           </Pressable>
-        </Pressable>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   );
@@ -237,14 +229,6 @@ const styles = StyleSheet.create({
   },
   label: { fontSize: 13, fontWeight: '800', color: '#1A1A1A', marginTop: 4 },
   row: { flexDirection: 'row', gap: 10 },
-  emojiChip: {
-    padding: 8,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: '#1A1A1A',
-    backgroundColor: '#FFF',
-  },
-  activeChip: { backgroundColor: '#FFB6B6' },
   typeContainer: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   typeChip: {
     paddingHorizontal: 12,

@@ -143,7 +143,7 @@ export default function ListDetailScreen() {
                     <Image source={{ uri: item.poster_path }} style={styles.posterImage} />
                   ) : (
                     <View style={styles.placeholderImage}>
-                      <Ionicons name="film-outline" size={32} color="#1A1A1A" />
+                      <Ionicons name="film-outline" size={24} color="#1A1A1A" />
                     </View>
                   )}
 
@@ -219,16 +219,17 @@ const styles = StyleSheet.create({
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-start',
+    columnGap: 13,
     rowGap: 16,
   },
   gridCard: {
-    width: '47%',
+    width: '31%',
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
-    borderWidth: 2,
+    borderWidth: 1,
     borderColor: '#1A1A1A',
-    padding: 10,
+    padding: 8,
     shadowColor: '#1A1A1A',
     shadowOffset: { width: 3, height: 3 },
     shadowOpacity: 1,
@@ -237,7 +238,7 @@ const styles = StyleSheet.create({
   },
   posterImage: {
     width: '100%',
-    height: 150,
+    aspectRatio: 3 / 4,
     borderRadius: 10,
     borderWidth: 1.5,
     borderColor: '#1A1A1A',
@@ -245,7 +246,7 @@ const styles = StyleSheet.create({
   },
   placeholderImage: {
     width: '100%',
-    height: 150,
+    aspectRatio: 3 / 4,
     borderRadius: 10,
     borderWidth: 1.5,
     borderColor: '#1A1A1A',
@@ -255,11 +256,11 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   itemTitle: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '800',
     color: '#1A1A1A',
     marginBottom: 8,
-    minHeight: 32,
+    minHeight: 30,
   },
   statusPill: {
     alignSelf: 'flex-start',
