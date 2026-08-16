@@ -62,10 +62,12 @@ export default function HomeScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        {/* HEADER WITH + ADD BUTTON */}
+
+      <View style={styles.container}>
+
+      {/* HEADER WITH + ADD BUTTON */}
         <View style={styles.header}>
-          <Text style={styles.logoText}>DAISE 🌸</Text>
+          <Text style={styles.logoText}>DAISE</Text>
           <TouchableOpacity
             style={styles.addButton}
             onPress={() => router.push('/search')}
@@ -81,41 +83,45 @@ export default function HomeScreen() {
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.filterBar}
         >
-          <TouchableOpacity
-            style={[styles.pill, activeFilter === 'IN_PROGRESS' && styles.activePill]}
-            onPress={() => setActiveFilter('IN_PROGRESS')}
-          >
-            <Text style={styles.pillText}>⚡ In Progress</Text>
-          </TouchableOpacity>
 
           <TouchableOpacity
             style={[styles.pill, activeFilter === 'ALL' && styles.activePill]}
             onPress={() => setActiveFilter('ALL')}
           >
-            <Text style={styles.pillText}>✨ All Items</Text>
+            <Text style={styles.pillText}>All</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.pill, activeFilter === 'IN_PROGRESS' && styles.activePill]}
+            onPress={() => setActiveFilter('IN_PROGRESS')}
+          >
+            <Text style={styles.pillText}>In Progress</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             style={[styles.pill, activeFilter === 'COMPLETED' && styles.activePill]}
             onPress={() => setActiveFilter('COMPLETED')}
           >
-            <Text style={styles.pillText}>🎉 Completed</Text>
+            <Text style={styles.pillText}>Completed</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             style={[styles.pill, activeFilter === 'DROPPED' && styles.activePill]}
             onPress={() => setActiveFilter('DROPPED')}
           >
-            <Text style={styles.pillText}>📦 Dropped</Text>
+            <Text style={styles.pillText}>Dropped</Text>
           </TouchableOpacity>
         </ScrollView>
+      </View>
+
+      <ScrollView contentContainerStyle={styles.scrollContent}>
 
         {/* MEDIA FEED */}
         {loading ? (
           <ActivityIndicator size="large" color="#FF8A8A" style={{ marginTop: 40 }} />
         ) : items.length === 0 ? (
           <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>No items in this filter yet! 🍿</Text>
+            <Text style={styles.emptyText}>No items in this filter yet!</Text>
             <Text style={styles.emptySubText}>
               Tap '+ Add' above to search and add media into your lists.
             </Text>
@@ -150,9 +156,9 @@ export default function HomeScreen() {
 
                   <Text style={styles.progressText}>
                     {item.status === 'COMPLETED'
-                      ? 'Completed 🎉'
+                      ? 'Completed'
                       : item.status === 'DROPPED'
-                      ? 'Dropped 📦'
+                      ? 'Dropped'
                       : item.media_type === 'BOOK'
                       ? `Page ${item.current_page} of ${item.total_pages}`
                       : item.media_type === 'TV'
@@ -171,7 +177,8 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#FDFBF7' },
-  scrollContent: { padding: 20, paddingBottom: 110 },
+  container: { padding: 20, paddingBottom: 0 },
+  scrollContent: { padding: 20, paddingBottom: 100, paddingTop: 0 },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
