@@ -1,7 +1,7 @@
 // services/mediaService.ts
 import * as SQLite from 'expo-sqlite';
 import { getDb } from './database';
-import { SearchResultItem } from './apiService';
+import { SearchResultItem, getTVDetails } from './apiService';
 
 export interface MediaItem {
   id: string;
@@ -27,6 +27,12 @@ export interface CustomList {
   is_ranked: number;
   created_at: string;
   item_count?: number;
+}
+
+export interface Tag {
+  id: string;
+  name: string;
+  color_hex: string;
 }
 
 // Fetch all custom lists
@@ -150,22 +156,100 @@ export async function updateMediaStatus(id: string, status: 'PLAN_TO_WATCH' | 'W
     `UPDATE media_items SET status = ?, date_completed = ? WHERE id = ?;`,
     [status, dateCompleted, id]
   );
+
+  // Marking something Completed — whether you did that manually (e.g. binged it
+  // without ticking off episodes along the way) or it happened automatically —
+  // should also snap progress to the known total, so the numbers stay honest.
+  // Only when the total is actually known; otherwise there's nothing to snap to.
+  if (status === 'COMPLETED') {
+    const item = await db.getFirstAsync<{ media_type: MediaItem['media_type']; total_pages: number }>(
+      `SELECT media_type, total_pages FROM media_items WHERE id = ?;`,
+      [id]
+    );
+    if (!item) return;
+
+    if (item.media_type === 'TV') {
+      const tv = await db.getFirstAsync<{ total_episodes: number }>(
+        `SELECT total_episodes FROM tv_show_details WHERE media_id = ?;`,
+        [id]
+      );
+      if (tv && tv.total_episodes > 0) {
+        await db.runAsync(`UPDATE tv_show_details SET current_episode = ? WHERE media_id = ?;`, [
+          tv.total_episodes,
+          id,
+        ]);
+      }
+    } else if (item.media_type === 'BOOK' && item.total_pages > 0) {
+      await db.runAsync(`UPDATE media_items SET current_page = ? WHERE id = ?;`, [
+        item.total_pages,
+        id,
+      ]);
+    }
+  }
 }
 
-// Increment / Decrement episode or page progress
+// Increment / Decrement episode or page progress.
+// Also auto-transitions status in two specific cases, without overriding any
+// other manual status choice the user made:
+//   - PLAN_TO_WATCH → WATCHING, the moment progress moves above 0
+//   - anything → COMPLETED, the moment progress reaches the known total
 export async function updateProgress(id: string, mediaType: string, change: number): Promise<void> {
   const db = await getDb();
 
   if (mediaType === 'TV') {
-    await db.runAsync(
-      `UPDATE tv_show_details SET current_episode = MAX(0, current_episode + ?) WHERE media_id = ?;`,
-      [change, id]
+    const row = await db.getFirstAsync<{
+      current_episode: number;
+      total_episodes: number;
+      status: MediaItem['status'];
+    }>(
+      `SELECT t.current_episode, t.total_episodes, m.status
+       FROM tv_show_details t
+       JOIN media_items m ON m.id = t.media_id
+       WHERE t.media_id = ?;`,
+      [id]
     );
+    if (!row) return;
+
+    const newValue = Math.max(0, row.current_episode + change);
+    await db.runAsync(`UPDATE tv_show_details SET current_episode = ? WHERE media_id = ?;`, [
+      newValue,
+      id,
+    ]);
+
+    await maybeAutoUpdateStatus(id, row.status, newValue, row.total_episodes);
   } else if (mediaType === 'BOOK') {
-    await db.runAsync(
-      `UPDATE media_items SET current_page = MAX(0, current_page + ?) WHERE id = ?;`,
-      [change, id]
-    );
+    const row = await db.getFirstAsync<{
+      current_page: number;
+      total_pages: number;
+      status: MediaItem['status'];
+    }>(`SELECT current_page, total_pages, status FROM media_items WHERE id = ?;`, [id]);
+    if (!row) return;
+
+    const newValue = Math.max(0, row.current_page + change);
+    await db.runAsync(`UPDATE media_items SET current_page = ? WHERE id = ?;`, [newValue, id]);
+
+    await maybeAutoUpdateStatus(id, row.status, newValue, row.total_pages);
+  }
+}
+
+async function maybeAutoUpdateStatus(
+  id: string,
+  currentStatus: MediaItem['status'],
+  newProgress: number,
+  total: number
+): Promise<void> {
+  // Reaching the known total always means "finished" — takes priority, and
+  // applies from any status (except it's already a no-op if already Completed).
+  if (total > 0 && newProgress >= total && currentStatus !== 'COMPLETED') {
+    await updateMediaStatus(id, 'COMPLETED');
+    return;
+  }
+
+  // Starting progress only promotes out of "Plan to Watch/Read" specifically —
+  // if the user manually set Dropped or Completed, adding/removing progress
+  // won't silently pull it back to Watching behind their back.
+  if (newProgress > 0 && currentStatus === 'PLAN_TO_WATCH') {
+    await updateMediaStatus(id, 'WATCHING');
   }
 }
 
@@ -287,10 +371,24 @@ export async function addSearchResultToLibrary(
     );
 
     if (result.media_type === 'TV') {
+      // TMDb's search results never include episode/season counts — only its
+      // per-show details endpoint does — so fetch that separately here.
+      let totalEpisodes = result.total_episodes ?? 0;
+      let totalSeasons = 1;
+
+      const tmdbId = Number(result.id.replace('tv_', ''));
+      if (!isNaN(tmdbId)) {
+        const details = await getTVDetails(tmdbId);
+        if (details) {
+          totalEpisodes = details.totalEpisodes;
+          totalSeasons = details.totalSeasons;
+        }
+      }
+
       const tvDetailId = generateId('tvd');
       await db.runAsync(
-        `INSERT INTO tv_show_details (id, media_id, total_episodes) VALUES (?, ?, ?);`,
-        [tvDetailId, mediaId, result.total_episodes ?? 0]
+        `INSERT INTO tv_show_details (id, media_id, total_episodes, total_seasons) VALUES (?, ?, ?, ?);`,
+        [tvDetailId, mediaId, totalEpisodes, totalSeasons]
       );
     }
   }
@@ -325,4 +423,72 @@ export async function addSearchResultToLibrary(
   }
 
   return { mediaId, addedToListIds, alreadyInListIds };
+}
+
+// ─── TAGS ───────────────────────────────────────────────────────
+
+// Fetch every tag currently attached to a given media item
+export async function getTagsForMedia(mediaId: string): Promise<Tag[]> {
+  const db = await getDb();
+  return await db.getAllAsync<Tag>(
+    `SELECT t.id, t.name, t.color_hex
+     FROM tags t
+     JOIN media_tags mt ON mt.tag_id = t.id
+     WHERE mt.media_id = ?
+     ORDER BY t.name ASC;`,
+    [mediaId]
+  );
+}
+
+// Fetch every tag that exists in the app (for the "pick a tag" picker)
+export async function getAllTags(): Promise<Tag[]> {
+  const db = await getDb();
+  return await db.getAllAsync<Tag>('SELECT id, name, color_hex FROM tags ORDER BY name ASC;');
+}
+
+// Create a brand new tag. Reuses an existing tag with the same name (case-insensitive)
+// instead of creating a duplicate, since `name` is UNIQUE in the schema.
+export async function createTag(name: string, colorHex: string = '#FFD1DC'): Promise<Tag> {
+  const db = await getDb();
+  const trimmedName = name.trim();
+
+  const existing = await db.getFirstAsync<Tag>(
+    'SELECT id, name, color_hex FROM tags WHERE LOWER(name) = LOWER(?);',
+    [trimmedName]
+  );
+  if (existing) return existing;
+
+  const id = generateId('tag');
+  await db.runAsync('INSERT INTO tags (id, name, color_hex) VALUES (?, ?, ?);', [
+    id,
+    trimmedName,
+    colorHex,
+  ]);
+
+  return { id, name: trimmedName, color_hex: colorHex };
+}
+
+// Attach a tag to a media item (no-op if already attached, since it's a composite PK)
+export async function addTagToMedia(mediaId: string, tagId: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    'INSERT OR IGNORE INTO media_tags (media_id, tag_id) VALUES (?, ?);',
+    [mediaId, tagId]
+  );
+}
+
+// Detach a tag from a media item (the tag itself still exists for reuse elsewhere)
+export async function removeTagFromMedia(mediaId: string, tagId: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync('DELETE FROM media_tags WHERE media_id = ? AND tag_id = ?;', [
+    mediaId,
+    tagId,
+  ]);
+}
+
+// Delete a tag entirely — removes it from every item it's attached to (via FK cascade),
+// not just the current one. This is a global, irreversible action.
+export async function deleteTag(tagId: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync('DELETE FROM tags WHERE id = ?;', [tagId]);
 }
