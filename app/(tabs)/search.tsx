@@ -172,7 +172,7 @@ export default function SearchScreen() {
   // Explicitly navigating to the known destination sidesteps that entirely.
   const handleClose = () => {
     if (isListContext) {
-      router.replace(`/list/${listId}`);
+      router.dismissTo(`/list/${listId}`);
     } else {
       router.back();
     }
