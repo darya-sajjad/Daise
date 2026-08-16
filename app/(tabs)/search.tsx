@@ -50,16 +50,27 @@ export default function SearchScreen() {
   const [pickerItem, setPickerItem] = useState<SearchResultItem | null>(null);
   const [selectedListIds, setSelectedListIds] = useState<Set<string>>(new Set());
 
-  // If arriving from a specific list, load it and lock the filter to its type
+  // Reset everything each time this screen is entered in a new context.
+  // Tab screens stay mounted in Expo Router, so without this, state from a
+  // previous visit (e.g. a locked filter from inside a list) would silently
+  // leak into the next visit (e.g. adding from Home) instead of resetting.
   useEffect(() => {
-    if (!listId) return;
-    (async () => {
-      const listData = await getListById(listId);
-      setList(listData);
-      if (listData && listData.list_type !== 'ALL') {
-        setActiveFilter(listData.list_type);
-      }
-    })();
+    if (listId) {
+      (async () => {
+        const listData = await getListById(listId);
+        setList(listData);
+        setActiveFilter(listData && listData.list_type !== 'ALL' ? listData.list_type : 'ALL');
+      })();
+    } else {
+      setList(null);
+      setActiveFilter('ALL');
+    }
+
+    setQuery('');
+    setResults([]);
+    setAddedIds(new Set());
+    setPickerItem(null);
+    setSelectedListIds(new Set());
   }, [listId]);
 
   // If arriving from Home (no listId), preload all lists for the picker
@@ -155,12 +166,24 @@ export default function SearchScreen() {
     ? allLists.filter((l) => l.list_type === 'ALL' || l.list_type === pickerItem.media_type)
     : [];
 
+  // router.back() is unreliable here: entering search from a list screen crosses
+  // from the root stack into the tabs navigator, which isn't a normal stack push,
+  // so "back" can land on Home instead of the list you actually came from.
+  // Explicitly navigating to the known destination sidesteps that entirely.
+  const handleClose = () => {
+    if (isListContext) {
+      router.replace(`/list/${listId}`);
+    } else {
+      router.back();
+    }
+  };
+
   return (
     <SafeAreaView style={styles.safeArea}>
       {/* TOP BAR */}
       <View style={styles.topBar}>
-        <TouchableOpacity style={styles.iconCircle} onPress={() => router.back()}>
-          <Ionicons name="close" size={22} color="#1A1A1A" />
+        <TouchableOpacity style={styles.iconCircle} onPress={handleClose}>
+          <Ionicons name="arrow-back" size={22} color="#1A1A1A" />
         </TouchableOpacity>
         <Text style={styles.topBarTitle} numberOfLines={1}>
           {list ? `Add to "${list.title}"` : 'Add Media'}
@@ -179,6 +202,14 @@ export default function SearchScreen() {
           onChangeText={setQuery}
           autoFocus
         />
+        {query.length > 0 && (
+          <TouchableOpacity
+            onPress={() => setQuery('')}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="close-circle" size={18} color="#999" />
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* MEDIA TYPE FILTER TABS (hidden if list restricts to one type) */}
