@@ -17,10 +17,10 @@ import { getCustomLists, createCustomList, CustomList } from '../../services/med
 import { useRouter, useFocusEffect } from 'expo-router';
 
 const LIST_TYPES = [
-  { label: '🍿 Mixed / Any', value: 'ALL' },
-  { label: '🎬 Movies Only', value: 'MOVIE' },
-  { label: '📺 TV Shows Only', value: 'TV' },
-  { label: '📚 Books Only', value: 'BOOK' },
+  { label: 'Mixed', value: 'ALL' },
+  { label: 'Movies', value: 'MOVIE' },
+  { label: 'TV Shows', value: 'TV' },
+  { label: 'Books', value: 'BOOK' },
 ] as const;
 
 const PASTEL_COLORS = ['#E2F1E7', '#FFF3B0', '#FFB6B6', '#D1E8FF', '#F3D1FF'];
@@ -48,7 +48,7 @@ export default function ListsScreen() {
 
   const handleCreateList = async () => {
     if (!title.trim()) return;
-    await createCustomList(title, '🍿', selectedColor, selectedType);
+    await createCustomList(title, selectedColor, selectedType);
     setTitle('');
     setIsModalOpen(false);
     loadLists();

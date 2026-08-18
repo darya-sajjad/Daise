@@ -1,5 +1,5 @@
 // app/(tabs)/search.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 
 import { searchMediaByRestriction, SearchResultItem } from '../../services/apiService';
 import {
@@ -27,10 +27,10 @@ import {
 type MediaFilter = 'ALL' | 'MOVIE' | 'TV' | 'BOOK';
 
 const FILTER_TABS: { label: string; value: MediaFilter }[] = [
-  { label: '✨ All', value: 'ALL' },
-  { label: '🎬 Movies', value: 'MOVIE' },
-  { label: '📺 TV', value: 'TV' },
-  { label: '📚 Books', value: 'BOOK' },
+  { label: 'All', value: 'ALL' },
+  { label: 'Movies', value: 'MOVIE' },
+  { label: 'TV Shows', value: 'TV' },
+  { label: 'Books', value: 'BOOK' },
 ];
 
 export default function SearchScreen() {
@@ -50,17 +50,37 @@ export default function SearchScreen() {
   const [pickerItem, setPickerItem] = useState<SearchResultItem | null>(null);
   const [selectedListIds, setSelectedListIds] = useState<Set<string>>(new Set());
 
-  // If arriving from a specific list, load it and lock the filter to its type
   useEffect(() => {
-    if (!listId) return;
-    (async () => {
-      const listData = await getListById(listId);
-      setList(listData);
-      if (listData && listData.list_type !== 'ALL') {
-        setActiveFilter(listData.list_type);
-      }
-    })();
+    if (listId) {
+      (async () => {
+        const listData = await getListById(listId);
+        setList(listData);
+        setActiveFilter(listData && listData.list_type !== 'ALL' ? listData.list_type : 'ALL');
+      })();
+    } else {
+      setList(null);
+      setActiveFilter('ALL');
+    }
+
+    setQuery('');
+    setResults([]);
+    setAddedIds(new Set());
+    setPickerItem(null);
+    setSelectedListIds(new Set());
   }, [listId]);
+
+  // Reset search state every time this screen is focused (e.g. coming back from a detail page)
+  useFocusEffect(
+    useCallback(() => {
+      return () => {
+        setQuery('');
+        setResults([]);
+        setAddedIds(new Set());
+        setPickerItem(null);
+        setSelectedListIds(new Set());
+      };
+    }, [])
+  );
 
   // If arriving from Home (no listId), preload all lists for the picker
   useEffect(() => {
@@ -152,20 +172,32 @@ export default function SearchScreen() {
   // Lists compatible with the item currently in the picker (type-restricted lists
   // can't hold items outside their type)
   const compatibleLists = pickerItem
-    ? allLists.filter((l) => l.list_type === 'ALL' || l.list_type === pickerItem.media_type)
-    : [];
+  ? allLists.filter(
+      (l) =>
+        l.list_type === 'ALL' ||
+        l.list_type.toUpperCase() === pickerItem.media_type.toUpperCase()
+    )
+  : [];
+
+  const handleClose = () => {
+    if (isListContext) {
+      router.dismissTo(`/list/${listId}`);
+    } else {
+      router.back();
+    }
+  };
 
   return (
     <SafeAreaView style={styles.safeArea}>
       {/* TOP BAR */}
       <View style={styles.topBar}>
-        <TouchableOpacity style={styles.iconCircle} onPress={() => router.back()}>
-          <Ionicons name="close" size={22} color="#1A1A1A" />
+        <TouchableOpacity style={styles.iconCircle} onPress={handleClose}>
+          <Ionicons name="arrow-back" size={22} color="#1A1A1A" />
         </TouchableOpacity>
         <Text style={styles.topBarTitle} numberOfLines={1}>
           {list ? `Add to "${list.title}"` : 'Add Media'}
         </Text>
-        <View style={styles.iconCircle} />
+        <View style={{ width: 40 }} />
       </View>
 
       {/* SEARCH INPUT */}
@@ -179,6 +211,14 @@ export default function SearchScreen() {
           onChangeText={setQuery}
           autoFocus
         />
+        {query.length > 0 && (
+          <TouchableOpacity
+            onPress={() => setQuery('')}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="close-circle" size={18} color="#999" />
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* MEDIA TYPE FILTER TABS (hidden if list restricts to one type) */}
@@ -202,7 +242,7 @@ export default function SearchScreen() {
       ) : results.length === 0 ? (
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyText}>
-            {query.trim() ? 'No results found 😕' : 'Start typing to search 🔎'}
+            {query.trim() ? 'No results found!' : 'Start typing to search...'}
           </Text>
         </View>
       ) : (
@@ -286,7 +326,6 @@ export default function SearchScreen() {
                         style={[styles.listOptionRow, isSelected && styles.listOptionRowActive]}
                         onPress={() => toggleListSelection(l.id)}
                       >
-                        <Text style={styles.listOptionEmoji}>{l.emoji_icon}</Text>
                         <Text style={styles.listOptionText}>{l.title}</Text>
                         <View style={[styles.checkbox, isSelected && styles.checkboxActive]}>
                           {isSelected && <Ionicons name="checkmark" size={14} color="#FFFFFF" />}
@@ -319,7 +358,7 @@ const styles = StyleSheet.create({
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
     paddingHorizontal: 20,
     paddingVertical: 12,
   },
@@ -332,6 +371,7 @@ const styles = StyleSheet.create({
     borderColor: '#1A1A1A',
     justifyContent: 'center',
     alignItems: 'center',
+    marginRight: 0,
   },
   topBarTitle: {
     fontSize: 16,
@@ -356,6 +396,7 @@ const styles = StyleSheet.create({
   searchInput: { flex: 1, fontSize: 15, fontWeight: '600', color: '#1A1A1A' },
   filterRow: {
     flexDirection: 'row',
+    alignSelf: 'center',
     gap: 8,
     paddingHorizontal: 20,
     marginBottom: 14,

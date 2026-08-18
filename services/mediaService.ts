@@ -1,7 +1,7 @@
 // services/mediaService.ts
 import * as SQLite from 'expo-sqlite';
 import { getDb } from './database';
-import { SearchResultItem } from './apiService';
+import { SearchResultItem, getTVDetails, getMovieDetails } from './apiService';
 
 export interface MediaItem {
   id: string;
@@ -16,17 +16,25 @@ export interface MediaItem {
   date_added: string;
   current_episode?: number;
   total_episodes?: number;
+  // Real runtime data pulled from TMDb at add-time (0 if unknown/not fetched)
+  runtime_minutes?: number;
+  episode_runtime_minutes?: number;
 }
 
 export interface CustomList {
   id: string;
   title: string;
-  emoji_icon: string;
   cover_color: string;
   list_type: 'ALL' | 'MOVIE' | 'TV' | 'BOOK';
   is_ranked: number;
   created_at: string;
   item_count?: number;
+}
+
+export interface Tag {
+  id: string;
+  name: string;
+  color_hex: string;
 }
 
 // Fetch all custom lists
@@ -38,7 +46,6 @@ export async function getCustomLists(): Promise<CustomList[]> {
 // Create a new custom list — no longer takes `db` as a param, matches lists.tsx's call site
 export async function createCustomList(
   title: string,
-  emojiIcon: string = '🍿',
   coverColor: string = '#E2F1E7',
   listType: 'ALL' | 'MOVIE' | 'TV' | 'BOOK' = 'ALL'
 ): Promise<CustomList | null> {
@@ -48,15 +55,14 @@ export async function createCustomList(
 
   try {
     await db.runAsync(
-      `INSERT INTO lists (id, title, emoji_icon, cover_color, list_type, created_at)
-       VALUES (?, ?, ?, ?, ?, ?);`,
-      [id, title, emojiIcon, coverColor, listType, createdAt]
+      `INSERT INTO lists (id, title, cover_color, list_type, created_at)
+       VALUES (?, ?, ?, ?, ?);`,
+      [id, title, coverColor, listType, createdAt]
     );
 
     return {
       id,
       title,
-      emoji_icon: emojiIcon,
       cover_color: coverColor,
       list_type: listType,
       is_ranked: 0,
@@ -77,7 +83,8 @@ export async function getMediaItemById(id: string): Promise<MediaItem | null> {
     SELECT 
       m.*,
       t.current_episode,
-      t.total_episodes
+      t.total_episodes,
+      t.episode_runtime_minutes
     FROM media_items m
     LEFT JOIN tv_show_details t ON m.id = t.media_id
     WHERE m.id = ?;
@@ -98,6 +105,8 @@ export async function getMediaItemById(id: string): Promise<MediaItem | null> {
     date_added: row.date_added,
     current_episode: row.current_episode || 0,
     total_episodes: row.total_episodes || 0,
+    runtime_minutes: row.runtime_minutes || 0,
+    episode_runtime_minutes: row.episode_runtime_minutes || 0,
   };
 }
 
@@ -118,7 +127,8 @@ export async function getMediaItemsByFilter(filter: 'IN_PROGRESS' | 'ALL' | 'COM
     SELECT 
       m.*,
       t.current_episode,
-      t.total_episodes
+      t.total_episodes,
+      t.episode_runtime_minutes
     FROM media_items m
     LEFT JOIN tv_show_details t ON m.id = t.media_id
     ${whereClause}
@@ -138,6 +148,8 @@ export async function getMediaItemsByFilter(filter: 'IN_PROGRESS' | 'ALL' | 'COM
     date_added: row.date_added,
     current_episode: row.current_episode || 0,
     total_episodes: row.total_episodes || 0,
+    runtime_minutes: row.runtime_minutes || 0,
+    episode_runtime_minutes: row.episode_runtime_minutes || 0,
   }));
 }
 
@@ -150,22 +162,100 @@ export async function updateMediaStatus(id: string, status: 'PLAN_TO_WATCH' | 'W
     `UPDATE media_items SET status = ?, date_completed = ? WHERE id = ?;`,
     [status, dateCompleted, id]
   );
+
+  // Marking something Completed — whether you did that manually (e.g. binged it
+  // without ticking off episodes along the way) or it happened automatically —
+  // should also snap progress to the known total, so the numbers stay honest.
+  // Only when the total is actually known; otherwise there's nothing to snap to.
+  if (status === 'COMPLETED') {
+    const item = await db.getFirstAsync<{ media_type: MediaItem['media_type']; total_pages: number }>(
+      `SELECT media_type, total_pages FROM media_items WHERE id = ?;`,
+      [id]
+    );
+    if (!item) return;
+
+    if (item.media_type === 'TV') {
+      const tv = await db.getFirstAsync<{ total_episodes: number }>(
+        `SELECT total_episodes FROM tv_show_details WHERE media_id = ?;`,
+        [id]
+      );
+      if (tv && tv.total_episodes > 0) {
+        await db.runAsync(`UPDATE tv_show_details SET current_episode = ? WHERE media_id = ?;`, [
+          tv.total_episodes,
+          id,
+        ]);
+      }
+    } else if (item.media_type === 'BOOK' && item.total_pages > 0) {
+      await db.runAsync(`UPDATE media_items SET current_page = ? WHERE id = ?;`, [
+        item.total_pages,
+        id,
+      ]);
+    }
+  }
 }
 
-// Increment / Decrement episode or page progress
+// Increment / Decrement episode or page progress.
+// Also auto-transitions status in two specific cases, without overriding any
+// other manual status choice the user made:
+//   - PLAN_TO_WATCH → WATCHING, the moment progress moves above 0
+//   - anything → COMPLETED, the moment progress reaches the known total
 export async function updateProgress(id: string, mediaType: string, change: number): Promise<void> {
   const db = await getDb();
 
   if (mediaType === 'TV') {
-    await db.runAsync(
-      `UPDATE tv_show_details SET current_episode = MAX(0, current_episode + ?) WHERE media_id = ?;`,
-      [change, id]
+    const row = await db.getFirstAsync<{
+      current_episode: number;
+      total_episodes: number;
+      status: MediaItem['status'];
+    }>(
+      `SELECT t.current_episode, t.total_episodes, m.status
+       FROM tv_show_details t
+       JOIN media_items m ON m.id = t.media_id
+       WHERE t.media_id = ?;`,
+      [id]
     );
+    if (!row) return;
+
+    const newValue = Math.max(0, row.current_episode + change);
+    await db.runAsync(`UPDATE tv_show_details SET current_episode = ? WHERE media_id = ?;`, [
+      newValue,
+      id,
+    ]);
+
+    await maybeAutoUpdateStatus(id, row.status, newValue, row.total_episodes);
   } else if (mediaType === 'BOOK') {
-    await db.runAsync(
-      `UPDATE media_items SET current_page = MAX(0, current_page + ?) WHERE id = ?;`,
-      [change, id]
-    );
+    const row = await db.getFirstAsync<{
+      current_page: number;
+      total_pages: number;
+      status: MediaItem['status'];
+    }>(`SELECT current_page, total_pages, status FROM media_items WHERE id = ?;`, [id]);
+    if (!row) return;
+
+    const newValue = Math.max(0, row.current_page + change);
+    await db.runAsync(`UPDATE media_items SET current_page = ? WHERE id = ?;`, [newValue, id]);
+
+    await maybeAutoUpdateStatus(id, row.status, newValue, row.total_pages);
+  }
+}
+
+async function maybeAutoUpdateStatus(
+  id: string,
+  currentStatus: MediaItem['status'],
+  newProgress: number,
+  total: number
+): Promise<void> {
+  // Reaching the known total always means "finished" — takes priority, and
+  // applies from any status (except it's already a no-op if already Completed).
+  if (total > 0 && newProgress >= total && currentStatus !== 'COMPLETED') {
+    await updateMediaStatus(id, 'COMPLETED');
+    return;
+  }
+
+  // Starting progress only promotes out of "Plan to Watch/Read" specifically —
+  // if the user manually set Dropped or Completed, adding/removing progress
+  // won't silently pull it back to Watching behind their back.
+  if (newProgress > 0 && currentStatus === 'PLAN_TO_WATCH') {
+    await updateMediaStatus(id, 'WATCHING');
   }
 }
 
@@ -203,7 +293,8 @@ export async function getListItems(listId: string): Promise<MediaItem[]> {
     SELECT 
       m.*,
       t.current_episode,
-      t.total_episodes
+      t.total_episodes,
+      t.episode_runtime_minutes
     FROM list_items li
     JOIN media_items m ON li.media_id = m.id
     LEFT JOIN tv_show_details t ON m.id = t.media_id
@@ -224,6 +315,8 @@ export async function getListItems(listId: string): Promise<MediaItem[]> {
     date_added: row.date_added,
     current_episode: row.current_episode || 0,
     total_episodes: row.total_episodes || 0,
+    runtime_minutes: row.runtime_minutes || 0,
+    episode_runtime_minutes: row.episode_runtime_minutes || 0,
   }));
 }
 
@@ -269,10 +362,24 @@ export async function addSearchResultToLibrary(
     mediaId = generateId(result.media_type.toLowerCase());
     const dateAdded = new Date().toISOString();
 
+    // TMDb's search results never include runtime — only the per-title details
+    // endpoint does — so movies get a dedicated fetch here, same reasoning as
+    // the TV details fetch below.
+    let runtimeMinutes = 0;
+    if (result.media_type === 'MOVIE') {
+      const tmdbId = Number(result.id.replace('movie_', ''));
+      if (!isNaN(tmdbId)) {
+        const details = await getMovieDetails(tmdbId);
+        if (details) {
+          runtimeMinutes = details.runtimeMinutes;
+        }
+      }
+    }
+
     await db.runAsync(
       `INSERT INTO media_items 
-        (id, media_type, external_id, title, overview, poster_path, release_date, total_pages, status, date_added)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PLAN_TO_WATCH', ?);`,
+        (id, media_type, external_id, title, overview, poster_path, release_date, total_pages, status, date_added, runtime_minutes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PLAN_TO_WATCH', ?, ?);`,
       [
         mediaId,
         result.media_type,
@@ -283,14 +390,31 @@ export async function addSearchResultToLibrary(
         result.release_date ?? null,
         result.total_pages ?? 0,
         dateAdded,
+        runtimeMinutes,
       ]
     );
 
     if (result.media_type === 'TV') {
+      // TMDb's search results never include episode/season counts or runtime —
+      // only its per-show details endpoint does — so fetch that separately here.
+      let totalEpisodes = result.total_episodes ?? 0;
+      let totalSeasons = 1;
+      let episodeRuntimeMinutes = 0;
+
+      const tmdbId = Number(result.id.replace('tv_', ''));
+      if (!isNaN(tmdbId)) {
+        const details = await getTVDetails(tmdbId);
+        if (details) {
+          totalEpisodes = details.totalEpisodes;
+          totalSeasons = details.totalSeasons;
+          episodeRuntimeMinutes = details.episodeRuntimeMinutes;
+        }
+      }
+
       const tvDetailId = generateId('tvd');
       await db.runAsync(
-        `INSERT INTO tv_show_details (id, media_id, total_episodes) VALUES (?, ?, ?);`,
-        [tvDetailId, mediaId, result.total_episodes ?? 0]
+        `INSERT INTO tv_show_details (id, media_id, total_episodes, total_seasons, episode_runtime_minutes) VALUES (?, ?, ?, ?, ?);`,
+        [tvDetailId, mediaId, totalEpisodes, totalSeasons, episodeRuntimeMinutes]
       );
     }
   }
@@ -325,4 +449,72 @@ export async function addSearchResultToLibrary(
   }
 
   return { mediaId, addedToListIds, alreadyInListIds };
+}
+
+// ─── TAGS ───────────────────────────────────────────────────────
+
+// Fetch every tag currently attached to a given media item
+export async function getTagsForMedia(mediaId: string): Promise<Tag[]> {
+  const db = await getDb();
+  return await db.getAllAsync<Tag>(
+    `SELECT t.id, t.name, t.color_hex
+     FROM tags t
+     JOIN media_tags mt ON mt.tag_id = t.id
+     WHERE mt.media_id = ?
+     ORDER BY t.name ASC;`,
+    [mediaId]
+  );
+}
+
+// Fetch every tag that exists in the app (for the "pick a tag" picker)
+export async function getAllTags(): Promise<Tag[]> {
+  const db = await getDb();
+  return await db.getAllAsync<Tag>('SELECT id, name, color_hex FROM tags ORDER BY name ASC;');
+}
+
+// Create a brand new tag. Reuses an existing tag with the same name (case-insensitive)
+// instead of creating a duplicate, since `name` is UNIQUE in the schema.
+export async function createTag(name: string, colorHex: string = '#FFD1DC'): Promise<Tag> {
+  const db = await getDb();
+  const trimmedName = name.trim();
+
+  const existing = await db.getFirstAsync<Tag>(
+    'SELECT id, name, color_hex FROM tags WHERE LOWER(name) = LOWER(?);',
+    [trimmedName]
+  );
+  if (existing) return existing;
+
+  const id = generateId('tag');
+  await db.runAsync('INSERT INTO tags (id, name, color_hex) VALUES (?, ?, ?);', [
+    id,
+    trimmedName,
+    colorHex,
+  ]);
+
+  return { id, name: trimmedName, color_hex: colorHex };
+}
+
+// Attach a tag to a media item (no-op if already attached, since it's a composite PK)
+export async function addTagToMedia(mediaId: string, tagId: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    'INSERT OR IGNORE INTO media_tags (media_id, tag_id) VALUES (?, ?);',
+    [mediaId, tagId]
+  );
+}
+
+// Detach a tag from a media item (the tag itself still exists for reuse elsewhere)
+export async function removeTagFromMedia(mediaId: string, tagId: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync('DELETE FROM media_tags WHERE media_id = ? AND tag_id = ?;', [
+    mediaId,
+    tagId,
+  ]);
+}
+
+// Delete a tag entirely — removes it from every item it's attached to (via FK cascade),
+// not just the current one. This is a global, irreversible action.
+export async function deleteTag(tagId: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync('DELETE FROM tags WHERE id = ?;', [tagId]);
 }
