@@ -1,5 +1,5 @@
 // app/(tabs)/search.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 
 import { searchMediaByRestriction, SearchResultItem } from '../../services/apiService';
 import {
@@ -68,6 +68,19 @@ export default function SearchScreen() {
     setPickerItem(null);
     setSelectedListIds(new Set());
   }, [listId]);
+
+  // Reset search state every time this screen is focused (e.g. coming back from a detail page)
+  useFocusEffect(
+    useCallback(() => {
+      return () => {
+        setQuery('');
+        setResults([]);
+        setAddedIds(new Set());
+        setPickerItem(null);
+        setSelectedListIds(new Set());
+      };
+    }, [])
+  );
 
   // If arriving from Home (no listId), preload all lists for the picker
   useEffect(() => {
