@@ -184,7 +184,7 @@ export default function MediaDetailScreen() {
     return (
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.notFoundContainer}>
-          <Text style={styles.notFoundText}>Media item not found 😕</Text>
+          <Text style={styles.notFoundText}>Media item not found.</Text>
           <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
             <Text style={styles.backBtnText}>Go Back</Text>
           </TouchableOpacity>
@@ -224,7 +224,7 @@ export default function MediaDetailScreen() {
 
         {/* TAGS SECTION */}
         <View style={styles.sectionContainer}>
-          <Text style={styles.sectionHeader}>Tags 🏷️</Text>
+          <Text style={styles.sectionHeader}>Tags</Text>
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -251,7 +251,7 @@ export default function MediaDetailScreen() {
 
         {/* DESCRIPTION */}
         <View style={styles.sectionContainer}>
-          <Text style={styles.sectionHeader}>Overview 📝</Text>
+          <Text style={styles.sectionHeader}>Overview</Text>
 
           {/* Invisible measuring pass — determines whether the full text actually
               exceeds 3 lines, so "Show more" only appears when it's truly needed */}
@@ -490,15 +490,15 @@ const styles = StyleSheet.create({
   scrollContent: { padding: 20, paddingBottom: 60 },
   coverWrapper: { alignItems: 'center', marginBottom: 16 },
   posterImage: {
-    width: 180,
-    height: 260,
+    width: 170,
+    height: 250,
     borderRadius: 16,
     borderWidth: 2,
     borderColor: '#1A1A1A',
   },
   placeholderImage: {
-    width: 180,
-    height: 260,
+    width: 170,
+    height: 250,
     borderRadius: 16,
     borderWidth: 2,
     borderColor: '#1A1A1A',
@@ -509,7 +509,7 @@ const styles = StyleSheet.create({
   badgeRow: { marginTop: 10 },
   mediaBadge: {
     fontSize: 12,
-    fontWeight: '900',
+    fontWeight: '800',
     backgroundColor: '#FFB6B6',
     paddingHorizontal: 12,
     paddingVertical: 4,
@@ -518,8 +518,8 @@ const styles = StyleSheet.create({
     borderColor: '#1A1A1A',
   },
   title: {
-    fontSize: 24,
-    fontWeight: '900',
+    fontSize: 22,
+    fontWeight: '800',
     color: '#1A1A1A',
     textAlign: 'center',
     marginBottom: 20,

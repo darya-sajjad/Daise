@@ -27,10 +27,10 @@ import {
 type MediaFilter = 'ALL' | 'MOVIE' | 'TV' | 'BOOK';
 
 const FILTER_TABS: { label: string; value: MediaFilter }[] = [
-  { label: '✨ All', value: 'ALL' },
-  { label: '🎬 Movies', value: 'MOVIE' },
-  { label: '📺 TV', value: 'TV' },
-  { label: '📚 Books', value: 'BOOK' },
+  { label: 'All', value: 'ALL' },
+  { label: 'Movies', value: 'MOVIE' },
+  { label: 'TV Shows', value: 'TV' },
+  { label: 'Books', value: 'BOOK' },
 ];
 
 export default function SearchScreen() {
@@ -50,10 +50,6 @@ export default function SearchScreen() {
   const [pickerItem, setPickerItem] = useState<SearchResultItem | null>(null);
   const [selectedListIds, setSelectedListIds] = useState<Set<string>>(new Set());
 
-  // Reset everything each time this screen is entered in a new context.
-  // Tab screens stay mounted in Expo Router, so without this, state from a
-  // previous visit (e.g. a locked filter from inside a list) would silently
-  // leak into the next visit (e.g. adding from Home) instead of resetting.
   useEffect(() => {
     if (listId) {
       (async () => {
@@ -163,13 +159,13 @@ export default function SearchScreen() {
   // Lists compatible with the item currently in the picker (type-restricted lists
   // can't hold items outside their type)
   const compatibleLists = pickerItem
-    ? allLists.filter((l) => l.list_type === 'ALL' || l.list_type === pickerItem.media_type)
-    : [];
+  ? allLists.filter(
+      (l) =>
+        l.list_type === 'ALL' ||
+        l.list_type.toUpperCase() === pickerItem.media_type.toUpperCase()
+    )
+  : [];
 
-  // router.back() is unreliable here: entering search from a list screen crosses
-  // from the root stack into the tabs navigator, which isn't a normal stack push,
-  // so "back" can land on Home instead of the list you actually came from.
-  // Explicitly navigating to the known destination sidesteps that entirely.
   const handleClose = () => {
     if (isListContext) {
       router.dismissTo(`/list/${listId}`);
@@ -188,7 +184,7 @@ export default function SearchScreen() {
         <Text style={styles.topBarTitle} numberOfLines={1}>
           {list ? `Add to "${list.title}"` : 'Add Media'}
         </Text>
-        <View style={styles.iconCircle} />
+        <View style={{ width: 40 }} />
       </View>
 
       {/* SEARCH INPUT */}
@@ -233,7 +229,7 @@ export default function SearchScreen() {
       ) : results.length === 0 ? (
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyText}>
-            {query.trim() ? 'No results found 😕' : 'Start typing to search 🔎'}
+            {query.trim() ? 'No results found!' : 'Start typing to search...'}
           </Text>
         </View>
       ) : (
@@ -317,7 +313,6 @@ export default function SearchScreen() {
                         style={[styles.listOptionRow, isSelected && styles.listOptionRowActive]}
                         onPress={() => toggleListSelection(l.id)}
                       >
-                        <Text style={styles.listOptionEmoji}>{l.emoji_icon}</Text>
                         <Text style={styles.listOptionText}>{l.title}</Text>
                         <View style={[styles.checkbox, isSelected && styles.checkboxActive]}>
                           {isSelected && <Ionicons name="checkmark" size={14} color="#FFFFFF" />}
@@ -350,7 +345,7 @@ const styles = StyleSheet.create({
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
     paddingHorizontal: 20,
     paddingVertical: 12,
   },
@@ -363,6 +358,7 @@ const styles = StyleSheet.create({
     borderColor: '#1A1A1A',
     justifyContent: 'center',
     alignItems: 'center',
+    marginRight: 0,
   },
   topBarTitle: {
     fontSize: 16,
@@ -387,6 +383,7 @@ const styles = StyleSheet.create({
   searchInput: { flex: 1, fontSize: 15, fontWeight: '600', color: '#1A1A1A' },
   filterRow: {
     flexDirection: 'row',
+    alignSelf: 'center',
     gap: 8,
     paddingHorizontal: 20,
     marginBottom: 14,
