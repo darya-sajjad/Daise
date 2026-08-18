@@ -29,7 +29,8 @@ export async function initDatabase() {
       user_rating REAL,
       user_notes TEXT,
       date_added TEXT NOT NULL,
-      date_completed TEXT
+      date_completed TEXT,
+      runtime_minutes INTEGER DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS tv_show_details (
@@ -39,13 +40,13 @@ export async function initDatabase() {
       total_episodes INTEGER DEFAULT 0,
       current_season INTEGER DEFAULT 1,
       current_episode INTEGER DEFAULT 0,
+      episode_runtime_minutes INTEGER DEFAULT 0,
       FOREIGN KEY (media_id) REFERENCES media_items(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS lists (
       id TEXT PRIMARY KEY NOT NULL,
       title TEXT NOT NULL,
-      emoji_icon TEXT DEFAULT '🍿',
       cover_color TEXT DEFAULT '#E2F1E7',
       list_type TEXT DEFAULT 'ALL',
       is_ranked INTEGER DEFAULT 0,
@@ -75,6 +76,21 @@ export async function initDatabase() {
       FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
     );
   `);
+
+  // Migrations for anyone with a database from before runtime tracking existed —
+  // CREATE TABLE IF NOT EXISTS above only applies the new columns to a brand new
+  // table, so existing installs need these added on separately. Fails harmlessly
+  // (caught below) if the column is already there.
+  try {
+    await db.execAsync(`ALTER TABLE media_items ADD COLUMN runtime_minutes INTEGER DEFAULT 0;`);
+  } catch (error) {
+    // Column already exists — nothing to do
+  }
+  try {
+    await db.execAsync(`ALTER TABLE tv_show_details ADD COLUMN episode_runtime_minutes INTEGER DEFAULT 0;`);
+  } catch (error) {
+    // Column already exists — nothing to do
+  }
 
   console.log('Database initialized successfully!');
   dbInstance = db;

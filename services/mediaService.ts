@@ -1,7 +1,7 @@
 // services/mediaService.ts
 import * as SQLite from 'expo-sqlite';
 import { getDb } from './database';
-import { SearchResultItem, getTVDetails } from './apiService';
+import { SearchResultItem, getTVDetails, getMovieDetails } from './apiService';
 
 export interface MediaItem {
   id: string;
@@ -16,12 +16,14 @@ export interface MediaItem {
   date_added: string;
   current_episode?: number;
   total_episodes?: number;
+  // Real runtime data pulled from TMDb at add-time (0 if unknown/not fetched)
+  runtime_minutes?: number;
+  episode_runtime_minutes?: number;
 }
 
 export interface CustomList {
   id: string;
   title: string;
-  emoji_icon: string;
   cover_color: string;
   list_type: 'ALL' | 'MOVIE' | 'TV' | 'BOOK';
   is_ranked: number;
@@ -44,7 +46,6 @@ export async function getCustomLists(): Promise<CustomList[]> {
 // Create a new custom list — no longer takes `db` as a param, matches lists.tsx's call site
 export async function createCustomList(
   title: string,
-  emojiIcon: string = '🍿',
   coverColor: string = '#E2F1E7',
   listType: 'ALL' | 'MOVIE' | 'TV' | 'BOOK' = 'ALL'
 ): Promise<CustomList | null> {
@@ -54,15 +55,14 @@ export async function createCustomList(
 
   try {
     await db.runAsync(
-      `INSERT INTO lists (id, title, emoji_icon, cover_color, list_type, created_at)
-       VALUES (?, ?, ?, ?, ?, ?);`,
-      [id, title, emojiIcon, coverColor, listType, createdAt]
+      `INSERT INTO lists (id, title, cover_color, list_type, created_at)
+       VALUES (?, ?, ?, ?, ?);`,
+      [id, title, coverColor, listType, createdAt]
     );
 
     return {
       id,
       title,
-      emoji_icon: emojiIcon,
       cover_color: coverColor,
       list_type: listType,
       is_ranked: 0,
@@ -83,7 +83,8 @@ export async function getMediaItemById(id: string): Promise<MediaItem | null> {
     SELECT 
       m.*,
       t.current_episode,
-      t.total_episodes
+      t.total_episodes,
+      t.episode_runtime_minutes
     FROM media_items m
     LEFT JOIN tv_show_details t ON m.id = t.media_id
     WHERE m.id = ?;
@@ -104,6 +105,8 @@ export async function getMediaItemById(id: string): Promise<MediaItem | null> {
     date_added: row.date_added,
     current_episode: row.current_episode || 0,
     total_episodes: row.total_episodes || 0,
+    runtime_minutes: row.runtime_minutes || 0,
+    episode_runtime_minutes: row.episode_runtime_minutes || 0,
   };
 }
 
@@ -124,7 +127,8 @@ export async function getMediaItemsByFilter(filter: 'IN_PROGRESS' | 'ALL' | 'COM
     SELECT 
       m.*,
       t.current_episode,
-      t.total_episodes
+      t.total_episodes,
+      t.episode_runtime_minutes
     FROM media_items m
     LEFT JOIN tv_show_details t ON m.id = t.media_id
     ${whereClause}
@@ -144,6 +148,8 @@ export async function getMediaItemsByFilter(filter: 'IN_PROGRESS' | 'ALL' | 'COM
     date_added: row.date_added,
     current_episode: row.current_episode || 0,
     total_episodes: row.total_episodes || 0,
+    runtime_minutes: row.runtime_minutes || 0,
+    episode_runtime_minutes: row.episode_runtime_minutes || 0,
   }));
 }
 
@@ -287,7 +293,8 @@ export async function getListItems(listId: string): Promise<MediaItem[]> {
     SELECT 
       m.*,
       t.current_episode,
-      t.total_episodes
+      t.total_episodes,
+      t.episode_runtime_minutes
     FROM list_items li
     JOIN media_items m ON li.media_id = m.id
     LEFT JOIN tv_show_details t ON m.id = t.media_id
@@ -308,6 +315,8 @@ export async function getListItems(listId: string): Promise<MediaItem[]> {
     date_added: row.date_added,
     current_episode: row.current_episode || 0,
     total_episodes: row.total_episodes || 0,
+    runtime_minutes: row.runtime_minutes || 0,
+    episode_runtime_minutes: row.episode_runtime_minutes || 0,
   }));
 }
 
@@ -353,10 +362,24 @@ export async function addSearchResultToLibrary(
     mediaId = generateId(result.media_type.toLowerCase());
     const dateAdded = new Date().toISOString();
 
+    // TMDb's search results never include runtime — only the per-title details
+    // endpoint does — so movies get a dedicated fetch here, same reasoning as
+    // the TV details fetch below.
+    let runtimeMinutes = 0;
+    if (result.media_type === 'MOVIE') {
+      const tmdbId = Number(result.id.replace('movie_', ''));
+      if (!isNaN(tmdbId)) {
+        const details = await getMovieDetails(tmdbId);
+        if (details) {
+          runtimeMinutes = details.runtimeMinutes;
+        }
+      }
+    }
+
     await db.runAsync(
       `INSERT INTO media_items 
-        (id, media_type, external_id, title, overview, poster_path, release_date, total_pages, status, date_added)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PLAN_TO_WATCH', ?);`,
+        (id, media_type, external_id, title, overview, poster_path, release_date, total_pages, status, date_added, runtime_minutes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PLAN_TO_WATCH', ?, ?);`,
       [
         mediaId,
         result.media_type,
@@ -367,14 +390,16 @@ export async function addSearchResultToLibrary(
         result.release_date ?? null,
         result.total_pages ?? 0,
         dateAdded,
+        runtimeMinutes,
       ]
     );
 
     if (result.media_type === 'TV') {
-      // TMDb's search results never include episode/season counts — only its
-      // per-show details endpoint does — so fetch that separately here.
+      // TMDb's search results never include episode/season counts or runtime —
+      // only its per-show details endpoint does — so fetch that separately here.
       let totalEpisodes = result.total_episodes ?? 0;
       let totalSeasons = 1;
+      let episodeRuntimeMinutes = 0;
 
       const tmdbId = Number(result.id.replace('tv_', ''));
       if (!isNaN(tmdbId)) {
@@ -382,13 +407,14 @@ export async function addSearchResultToLibrary(
         if (details) {
           totalEpisodes = details.totalEpisodes;
           totalSeasons = details.totalSeasons;
+          episodeRuntimeMinutes = details.episodeRuntimeMinutes;
         }
       }
 
       const tvDetailId = generateId('tvd');
       await db.runAsync(
-        `INSERT INTO tv_show_details (id, media_id, total_episodes, total_seasons) VALUES (?, ?, ?, ?);`,
-        [tvDetailId, mediaId, totalEpisodes, totalSeasons]
+        `INSERT INTO tv_show_details (id, media_id, total_episodes, total_seasons, episode_runtime_minutes) VALUES (?, ?, ?, ?, ?);`,
+        [tvDetailId, mediaId, totalEpisodes, totalSeasons, episodeRuntimeMinutes]
       );
     }
   }
